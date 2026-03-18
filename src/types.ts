@@ -21,6 +21,8 @@ export interface AuthState {
   cookie?: string;
   userId?: string;
   email?: string;
+  currentSpaceKey?: string;
+  currentLiveId?: string;
 }
 
 export interface FirebaseClientConfig {
@@ -113,6 +115,127 @@ export interface LiveListItem {
   scheduledStartAt?: string;
   viewerCount?: number;
   thumbnailUrl?: string;
+  [key: string]: unknown;
+}
+
+export interface LiveEnterResult {
+  spaceKey: string;
+  liveId: string;
+  live: LiveListItem;
+}
+
+export interface SpaceCreateRequest {
+  name: string;
+  backgroundId: string;
+  [key: string]: unknown;
+}
+
+export interface SpaceCreateResult {
+  spaceKey: string;
+  [key: string]: unknown;
+}
+
+export interface SpaceConnectionRequest {
+  muted: boolean;
+  [key: string]: unknown;
+}
+
+export interface SpaceConnectResult {
+  spaceKey: string;
+  muted: boolean;
+  connectionInfo?: Record<string, unknown>;
+  connection?: Record<string, unknown>;
+}
+
+export interface LiveCommentUser {
+  id?: string;
+  name?: string;
+  alias?: string;
+  icon?: string;
+  firstNominatedSelectionId?: string;
+  onlineSpaceId?: string;
+  [key: string]: unknown;
+}
+
+export interface LiveComment {
+  id: string;
+  documentPath: string;
+  kind?: string;
+  value?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  priority?: number;
+  user?: LiveCommentUser;
+  raw: FirestoreDocument<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface LiveCommentCreateRequest {
+  kind: string;
+  value?: string;
+  [key: string]: unknown;
+}
+
+export interface LiveCommentListOptions {
+  limit?: number;
+  orderBy?: string;
+  pageToken?: string;
+}
+
+export interface LiveCommentListResult {
+  comments: LiveComment[];
+  nextPageToken?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface SpaceMessageUser {
+  id?: string;
+  name?: string;
+  alias?: string;
+  icon?: string;
+  onlineSpaceId?: string;
+  [key: string]: unknown;
+}
+
+export interface SpaceMessage {
+  id: string;
+  documentPath: string;
+  kind?: string;
+  value?: string;
+  createdAt?: number;
+  updatedAt?: number;
+  user?: SpaceMessageUser;
+  raw: FirestoreDocument<Record<string, unknown>>;
+  [key: string]: unknown;
+}
+
+export interface SpaceMessageCreateRequest {
+  kind: string;
+  value?: string;
+  [key: string]: unknown;
+}
+
+export interface SpaceMessageListOptions {
+  limit?: number;
+  orderBy?: string;
+  pageToken?: string;
+}
+
+export interface SpaceMessageListResult {
+  messages: SpaceMessage[];
+  nextPageToken?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface LiveStartRequest {
+  genreId: string;
+  tags: string[];
+  canEnter: boolean;
+  [key: string]: unknown;
+}
+
+export interface LiveStartResult {
+  id: string;
   [key: string]: unknown;
 }
 

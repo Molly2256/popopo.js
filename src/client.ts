@@ -9,6 +9,13 @@ import type {
   AccountRegisterResult,
   AccountProfilePatch,
   AuthState,
+  LiveComment,
+  LiveCommentCreateRequest,
+  LiveCommentListOptions,
+  LiveCommentListResult,
+  LiveEnterResult,
+  LiveStartRequest,
+  LiveStartResult,
   DeepPartial,
   FirebaseAccountInfo,
   FirebaseAnonymousSignInRequest,
@@ -46,7 +53,15 @@ import type {
   SequencePlayStartRequest,
   SequenceRecordingStartRequest,
   Space,
+  SpaceConnectResult,
+  SpaceConnectionRequest,
+  SpaceCreateRequest,
+  SpaceCreateResult,
   SpaceLiveListRequest,
+  SpaceMessage,
+  SpaceMessageCreateRequest,
+  SpaceMessageListOptions,
+  SpaceMessageListResult,
   TsoAuthorizationCodeRequest,
   TsoClientConfig,
   TsoFileFetchOptions,
@@ -1125,6 +1140,16 @@ export class AccountsClient {
 export class SpacesClient {
   constructor(private readonly runtime: ClientRuntime) {}
 
+  create<TResponse = SpaceCreateResult>(
+    body: SpaceCreateRequest,
+  ): Promise<TResponse> {
+    return this.runtime.http.request<TResponse, SpaceCreateRequest>({
+      method: "POST",
+      url: buildAbsoluteUrl(this.runtime.options.apiBaseUrl, "/api/v2/spaces"),
+      body,
+    });
+  }
+
   current<TResponse = HomeDisplaySpacesResponse>(
     request: HomeDisplaySpacesRequest = {},
     query?: RequestQuery,
@@ -1172,10 +1197,117 @@ export class SpacesClient {
       query,
     });
   }
+
+  async connect(
+    spaceKey: string,
+    body: SpaceConnectionRequest = { muted: false },
+    query?: RequestQuery,
+  ): Promise<SpaceConnectResult> {
+    const connectionInfo = await this.connectionInfo<Record<string, unknown>>(
+      spaceKey,
+      {},
+      query,
+    );
+    const connection = await this.runtime.http.request<Record<string, unknown>, SpaceConnectionRequest>({
+      method: "POST",
+      url: buildAbsoluteUrl(
+        this.runtime.options.apiBaseUrl,
+        `/api/v2/spaces/${encodeURIComponent(spaceKey)}/users/me/connection`,
+      ),
+      body,
+      query,
+    });
+
+    this.runtime.http.setSession({
+      currentSpaceKey: spaceKey,
+    });
+
+    return {
+      spaceKey,
+      muted: body.muted,
+      connectionInfo,
+      connection,
+    };
+  }
+
+  postMessage<TResponse = { result?: boolean; [key: string]: unknown }>(
+    spaceKey: string,
+    body: SpaceMessageCreateRequest,
+    query?: RequestQuery,
+  ): Promise<TResponse> {
+    return this.runtime.http.request<TResponse, SpaceMessageCreateRequest>({
+      method: "POST",
+      url: buildAbsoluteUrl(
+        this.runtime.options.apiBaseUrl,
+        `/api/v2/spaces/${encodeURIComponent(spaceKey)}/messages`,
+      ),
+      body,
+      query,
+    });
+  }
+
+  async listMessages(
+    spaceKey: string,
+    options: SpaceMessageListOptions = {},
+  ): Promise<SpaceMessageListResult> {
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "GET",
+      url: buildFirestoreCollectionUrl(
+        this.runtime.options.firebase.firestoreBaseUrl,
+        this.runtime.options.firebase.projectId,
+        buildFirestoreCollectionPath("spaces", spaceKey, "space-messages"),
+      ),
+      auth: "none",
+      headers: {
+        authorization: `Bearer ${requireFirebaseBearerToken(this.runtime.http)}`,
+      },
+      query: compactObject({
+        key: this.runtime.options.firebase.apiKey,
+        pageSize: options.limit,
+        orderBy: options.orderBy,
+        pageToken: options.pageToken,
+      }) as RequestQuery,
+    });
+
+    this.runtime.http.setSession({
+      currentSpaceKey: spaceKey,
+    });
+
+    return parseSpaceMessageList(payload);
+  }
 }
 
 export class LivesClient {
   constructor(private readonly runtime: ClientRuntime) {}
+
+  async start<TResponse = LiveStartResult>(
+    input: {
+      spaceKey: string;
+      body: LiveStartRequest;
+      query?: RequestQuery;
+    },
+  ): Promise<TResponse> {
+    const response = await this.runtime.http.request<TResponse, LiveStartRequest>({
+      method: "POST",
+      url: buildAbsoluteUrl(
+        this.runtime.options.apiBaseUrl,
+        `/api/v2/spaces/${encodeURIComponent(input.spaceKey)}/lives`,
+      ),
+      body: input.body,
+      query: input.query,
+    });
+
+    const liveId =
+      optionalString((response as Record<string, unknown>).id) ??
+      optionalString((response as Record<string, unknown>).liveId);
+
+    this.runtime.http.setSession({
+      currentSpaceKey: input.spaceKey,
+      currentLiveId: liveId,
+    });
+
+    return response;
+  }
 
   current<TResponse = HomeDisplaySpacesResponse>(
     request: HomeDisplaySpacesRequest = {},
@@ -1232,6 +1364,85 @@ export class LivesClient {
       body,
       query,
     });
+  }
+
+  async enter(
+    spaceKey: string,
+    request: HomeDisplaySpacesRequest = {},
+    query?: RequestQuery,
+  ): Promise<LiveEnterResult> {
+    const live = await this.getCurrentBySpaceKey(spaceKey, request, query);
+    const liveId = live?.liveId ?? live?.id;
+
+    if (!liveId) {
+      throw new PopopoConfigurationError(
+        `No current live was found for space ${spaceKey}.`,
+      );
+    }
+
+    this.runtime.http.setSession({
+      currentSpaceKey: spaceKey,
+      currentLiveId: liveId,
+    });
+
+    return {
+      spaceKey,
+      liveId,
+      live: live as LiveListItem,
+    };
+  }
+
+  async postComment<TResponse = { id?: string; [key: string]: unknown }>(
+    input: {
+      spaceKey?: string;
+      liveId?: string;
+      body: LiveCommentCreateRequest;
+      request?: HomeDisplaySpacesRequest;
+      query?: RequestQuery;
+    },
+  ): Promise<TResponse> {
+    const context = await resolveLiveContext(this.runtime, input);
+
+    return this.runtime.http.request<TResponse, LiveCommentCreateRequest>({
+      method: "POST",
+      url: buildAbsoluteUrl(
+        this.runtime.options.apiBaseUrl,
+        `/api/v2/spaces/${encodeURIComponent(context.spaceKey)}/lives/${encodeURIComponent(context.liveId)}/comments`,
+      ),
+      body: input.body,
+      query: input.query,
+    });
+  }
+
+  async listComments(
+    input: {
+      spaceKey?: string;
+      liveId?: string;
+      options?: LiveCommentListOptions;
+      request?: HomeDisplaySpacesRequest;
+    } = {},
+  ): Promise<LiveCommentListResult> {
+    const context = await resolveLiveContext(this.runtime, input);
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "GET",
+      url: buildFirestoreCollectionUrl(
+        this.runtime.options.firebase.firestoreBaseUrl,
+        this.runtime.options.firebase.projectId,
+        buildFirestoreCollectionPath("spaces", context.spaceKey, "lives", context.liveId, "comments"),
+      ),
+      auth: "none",
+      headers: {
+        authorization: `Bearer ${requireFirebaseBearerToken(this.runtime.http)}`,
+      },
+      query: compactObject({
+        key: this.runtime.options.firebase.apiKey,
+        pageSize: input.options?.limit,
+        orderBy: input.options?.orderBy,
+        pageToken: input.options?.pageToken,
+      }) as RequestQuery,
+    });
+
+    return parseLiveCommentList(payload);
   }
 
 }
@@ -1603,11 +1814,26 @@ function buildFirestoreDocumentUrl(
   );
 }
 
+function buildFirestoreCollectionUrl(
+  baseUrl: string,
+  projectId: string,
+  collectionPath: string,
+): string {
+  return buildAbsoluteUrl(
+    baseUrl,
+    `/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${collectionPath}`,
+  );
+}
+
 function buildFirestoreDocumentPath(
   collectionId: string,
   documentId: string,
 ): string {
   return `${encodeURIComponent(collectionId)}/${encodeURIComponent(documentId)}`;
+}
+
+function buildFirestoreCollectionPath(...segments: string[]): string {
+  return segments.map((segment) => encodeURIComponent(segment)).join("/");
 }
 
 function buildAbsoluteUrl(baseUrl: string, suffix: string): string {
@@ -1896,6 +2122,156 @@ function parseFirestoreDocument<TFields = Record<string, unknown>>(
     fields,
     raw: payload,
   };
+}
+
+function parseFirestoreDocumentList<TFields = Record<string, unknown>>(
+  payload: Record<string, unknown>,
+): {
+  documents: FirestoreDocument<TFields>[];
+  nextPageToken?: string;
+  raw: Record<string, unknown>;
+} {
+  const documents = Array.isArray(payload.documents)
+    ? payload.documents
+        .filter((value): value is Record<string, unknown> =>
+          Boolean(value) && typeof value === "object"
+        )
+        .map((value) => parseFirestoreDocument<TFields>(value))
+    : [];
+
+  return {
+    documents,
+    nextPageToken: optionalString(payload.nextPageToken),
+    raw: payload,
+  };
+}
+
+function parseLiveCommentList(payload: Record<string, unknown>): LiveCommentListResult {
+  const parsed = parseFirestoreDocumentList(payload);
+
+  return {
+    comments: parsed.documents.map((document) => toLiveComment(document)),
+    nextPageToken: parsed.nextPageToken,
+    raw: parsed.raw,
+  };
+}
+
+function parseSpaceMessageList(payload: Record<string, unknown>): SpaceMessageListResult {
+  const parsed = parseFirestoreDocumentList(payload);
+
+  return {
+    messages: parsed.documents.map((document) => toSpaceMessage(document)),
+    nextPageToken: parsed.nextPageToken,
+    raw: parsed.raw,
+  };
+}
+
+function toLiveComment(
+  document: FirestoreDocument<Record<string, unknown>>,
+): LiveComment {
+  const record = document.fields;
+
+  return {
+    id: lastPathSegment(document.name),
+    documentPath: document.name,
+    kind: optionalString(record.kind),
+    value: optionalString(record.value),
+    createdAt: toFiniteNumber(record.created_at),
+    updatedAt: toFiniteNumber(record.updated_at),
+    priority: toFiniteNumber(record.priority),
+    user: (record.user && typeof record.user === "object")
+      ? normalizeLiveCommentUser(record.user as Record<string, unknown>)
+      : undefined,
+    raw: document,
+    ...record,
+  };
+}
+
+function normalizeLiveCommentUser(
+  user: Record<string, unknown>,
+): Record<string, unknown> {
+  return compactObject({
+    ...user,
+    id: optionalString(user.id),
+    name: optionalString(user.name),
+    alias: optionalString(user.alias),
+    icon: optionalString(user.icon),
+    firstNominatedSelectionId: optionalString(user.first_nominated_selection_id),
+    onlineSpaceId: optionalString(user.online_space_id),
+  });
+}
+
+function toSpaceMessage(
+  document: FirestoreDocument<Record<string, unknown>>,
+): SpaceMessage {
+  const record = document.fields;
+
+  return {
+    id: lastPathSegment(document.name),
+    documentPath: document.name,
+    kind: optionalString(record.kind),
+    value: optionalString(record.value),
+    createdAt: toFiniteNumber(record.created_at),
+    updatedAt: toFiniteNumber(record.updated_at),
+    user: (record.user && typeof record.user === "object")
+      ? normalizeLiveCommentUser(record.user as Record<string, unknown>)
+      : undefined,
+    raw: document,
+    ...record,
+  };
+}
+
+async function resolveLiveContext(
+  runtime: ClientRuntime,
+  input: {
+    spaceKey?: string;
+    liveId?: string;
+    request?: HomeDisplaySpacesRequest;
+    query?: RequestQuery;
+  },
+): Promise<{ spaceKey: string; liveId: string }> {
+  const session = runtime.http.getSession();
+  const spaceKey = input.spaceKey ?? session.currentSpaceKey;
+  const liveId = input.liveId ?? session.currentLiveId;
+
+  if (spaceKey && liveId) {
+    return { spaceKey, liveId };
+  }
+
+  if (!spaceKey) {
+    throw new PopopoConfigurationError(
+      "No live context is available. Pass --space-key/--live-id or run `uset lives enter` first.",
+    );
+  }
+
+  const lives = new LivesClient(runtime);
+  const current = await lives.getCurrentBySpaceKey(
+    spaceKey,
+    input.request,
+    input.query,
+  );
+  const currentLiveId = current?.liveId ?? current?.id;
+
+  if (!currentLiveId) {
+    throw new PopopoConfigurationError(
+      `No current live was found for space ${spaceKey}.`,
+    );
+  }
+
+  runtime.http.setSession({
+    currentSpaceKey: spaceKey,
+    currentLiveId,
+  });
+
+  return {
+    spaceKey,
+    liveId: currentLiveId,
+  };
+}
+
+function lastPathSegment(path: string): string {
+  const segments = path.split("/");
+  return segments[segments.length - 1] ?? path;
 }
 
 function decodeFirestoreFields(fields: unknown): Record<string, unknown> {

@@ -13,7 +13,14 @@ import {
   PopopoClient,
   type AccountProfilePatch,
   type AuthState,
+  type LiveCommentCreateRequest,
+  type LiveCommentListOptions,
+  type LiveStartRequest,
   type RequestQuery,
+  type SpaceConnectionRequest,
+  type SpaceCreateRequest,
+  type SpaceMessageCreateRequest,
+  type SpaceMessageListOptions,
 } from "../index.ts";
 
 type GlobalOptions = {
@@ -118,9 +125,9 @@ async function dispatchCommand(
     case "coin":
       return runCoinsSubcommand(second, client, options);
     case "lives":
-      return runLivesSubcommand(second, client, options);
+      return runLivesSubcommand(second, client, options, context.globalOptions);
     case "spaces":
-      return runSpacesSubcommand(second, client, options);
+      return runSpacesSubcommand(second, client, options, context.globalOptions);
     case "invites":
       return runInvitesSubcommand(second, client, options);
     case "notifications":
@@ -282,8 +289,17 @@ async function runSpacesSubcommand(
   command: string | undefined,
   client: PopopoClient,
   options: Map<string, string[]>,
+  globalOptions: GlobalOptions,
 ): Promise<unknown> {
   switch (command) {
+    case "create":
+      return client.spaces.create(buildSpaceCreateRequest(options));
+    case "connect":
+      return client.spaces.connect(
+        requireOption(options, "space-key"),
+        buildSpaceConnectionRequest(options),
+        parseQueryOptions(options),
+      );
     case "get":
       return client.spaces.getByKey(
         requireOption(options, "space-key"),
@@ -307,6 +323,19 @@ async function runSpacesSubcommand(
         buildRequestBody(options),
         parseQueryOptions(options),
       );
+    case "message":
+      return client.spaces.postMessage(
+        requireOption(options, "space-key"),
+        buildSpaceMessageCreateRequest(options),
+        parseQueryOptions(options),
+      );
+    case "messages":
+      return client.spaces.listMessages(
+        requireOption(options, "space-key"),
+        buildSpaceMessageListOptions(options),
+      );
+    case "watch":
+      return runSpaceMessageWatch(client, options, globalOptions);
     default:
       throw new Error("Unknown spaces subcommand.");
   }
@@ -316,8 +345,36 @@ async function runLivesSubcommand(
   command: string | undefined,
   client: PopopoClient,
   options: Map<string, string[]>,
+  globalOptions: GlobalOptions,
 ): Promise<unknown> {
   switch (command) {
+    case "start":
+      return client.lives.start({
+        spaceKey: requireOption(options, "space-key"),
+        body: buildLiveStartRequest(options),
+        query: parseQueryOptions(options),
+      });
+    case "enter":
+      return client.lives.enter(
+        requireOption(options, "space-key"),
+        buildHomeDisplaySpacesRequest(options),
+        parseQueryOptions(options),
+      );
+    case "comment":
+      return client.lives.postComment({
+        ...buildLiveContextInput(options),
+        body: buildLiveCommentCreateRequest(options),
+        request: buildHomeDisplaySpacesRequest(options),
+        query: parseQueryOptions(options),
+      });
+    case "comments":
+      return client.lives.listComments({
+        ...buildLiveContextInput(options),
+        options: buildLiveCommentListOptions(options),
+        request: buildHomeDisplaySpacesRequest(options),
+      });
+    case "watch":
+      return runLiveCommentWatch(client, options, globalOptions);
     case "current":
       return client.lives.current(
         buildHomeDisplaySpacesRequest(options),
@@ -349,6 +406,102 @@ async function runLivesSubcommand(
     default:
       throw new Error("Unknown lives subcommand.");
   }
+}
+
+async function runLiveCommentWatch(
+  client: PopopoClient,
+  options: Map<string, string[]>,
+  globalOptions: GlobalOptions,
+): Promise<unknown> {
+  const intervalMs = parseOptionalNumberOption(options, "interval-ms") ?? 3000;
+  const timeoutMs = parseOptionalNumberOption(options, "timeout-ms");
+  const startedAt = Date.now();
+  const seenIds = new Set<string>();
+  let printedCount = 0;
+  let lastSeenId: string | undefined;
+
+  while (true) {
+    const result = await client.lives.listComments({
+      ...buildLiveContextInput(options),
+      options: buildLiveCommentListOptions(options, "asc"),
+      request: buildHomeDisplaySpacesRequest(options),
+    });
+    const ordered = [...result.comments].sort(
+      (left, right) => (left.createdAt ?? 0) - (right.createdAt ?? 0),
+    );
+
+    for (const comment of ordered) {
+      if (seenIds.has(comment.id)) {
+        continue;
+      }
+
+      seenIds.add(comment.id);
+      printedCount += 1;
+      lastSeenId = comment.id;
+      printLiveComment(comment, globalOptions.json);
+    }
+
+    if (timeoutMs !== undefined && Date.now() - startedAt >= timeoutMs) {
+      break;
+    }
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
+  }
+
+  return {
+    ok: true,
+    printedCount,
+    seenCount: seenIds.size,
+    lastSeenId,
+  };
+}
+
+async function runSpaceMessageWatch(
+  client: PopopoClient,
+  options: Map<string, string[]>,
+  globalOptions: GlobalOptions,
+): Promise<unknown> {
+  const intervalMs = parseOptionalNumberOption(options, "interval-ms") ?? 3000;
+  const timeoutMs = parseOptionalNumberOption(options, "timeout-ms");
+  const startedAt = Date.now();
+  const seenIds = new Set<string>();
+  let printedCount = 0;
+  let lastSeenId: string | undefined;
+  const spaceKey = requireOption(options, "space-key");
+
+  while (true) {
+    const result = await client.spaces.listMessages(
+      spaceKey,
+      buildSpaceMessageListOptions(options, "asc"),
+    );
+    const ordered = [...result.messages].sort(
+      (left, right) => (left.createdAt ?? 0) - (right.createdAt ?? 0),
+    );
+
+    for (const message of ordered) {
+      if (seenIds.has(message.id)) {
+        continue;
+      }
+
+      seenIds.add(message.id);
+      printedCount += 1;
+      lastSeenId = message.id;
+      printSpaceMessage(message, globalOptions.json);
+    }
+
+    if (timeoutMs !== undefined && Date.now() - startedAt >= timeoutMs) {
+      break;
+    }
+
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, intervalMs));
+  }
+
+  return {
+    ok: true,
+    printedCount,
+    seenCount: seenIds.size,
+    lastSeenId,
+  };
 }
 
 async function runCoinsSubcommand(
@@ -667,6 +820,141 @@ function buildHomeDisplaySpacesRequest(
   return compactObject({
     kind: getSingleOption(options, "kind"),
     category: getSingleOption(options, "category"),
+  });
+}
+
+function buildLiveContextInput(
+  options: Map<string, string[]>,
+): { spaceKey?: string; liveId?: string } {
+  return compactObject({
+    spaceKey: getSingleOption(options, "space-key"),
+    liveId: getSingleOption(options, "live-id"),
+  }) as { spaceKey?: string; liveId?: string };
+}
+
+function buildSpaceCreateRequest(
+  options: Map<string, string[]>,
+): SpaceCreateRequest {
+  const rawBody = getSingleOption(options, "body-json");
+
+  if (rawBody) {
+    return parseJsonOption<SpaceCreateRequest>(rawBody, "--body-json");
+  }
+
+  return compactObject({
+    name: requireOption(options, "name"),
+    backgroundId: requireOption(options, "background-id"),
+  }) as SpaceCreateRequest;
+}
+
+function buildSpaceConnectionRequest(
+  options: Map<string, string[]>,
+): SpaceConnectionRequest {
+  const rawBody = getSingleOption(options, "body-json");
+
+  if (rawBody) {
+    return parseJsonOption<SpaceConnectionRequest>(rawBody, "--body-json");
+  }
+
+  return {
+    muted: parseOptionalBooleanOption(options, "muted") ?? false,
+  };
+}
+
+function buildSpaceMessageCreateRequest(
+  options: Map<string, string[]>,
+): SpaceMessageCreateRequest {
+  const rawBody = getSingleOption(options, "body-json");
+
+  if (rawBody) {
+    const parsed = parseJsonOption<Record<string, unknown>>(rawBody, "--body-json");
+
+    if (typeof parsed.kind !== "string" || parsed.kind.length === 0) {
+      throw new Error("Space message --body-json requires a string `kind` field.");
+    }
+
+    return parsed as SpaceMessageCreateRequest;
+  }
+
+  const text = getSingleOption(options, "text");
+
+  if (!text) {
+    throw new Error("Space message requires --text or --body-json.");
+  }
+
+  return {
+    kind: "text",
+    value: text,
+  };
+}
+
+function buildLiveCommentCreateRequest(
+  options: Map<string, string[]>,
+): LiveCommentCreateRequest {
+  const rawBody = getSingleOption(options, "body-json");
+
+  if (rawBody) {
+    const parsed = parseJsonOption<Record<string, unknown>>(rawBody, "--body-json");
+
+    if (typeof parsed.kind !== "string" || parsed.kind.length === 0) {
+      throw new Error("Live comment --body-json requires a string `kind` field.");
+    }
+
+    return parsed as LiveCommentCreateRequest;
+  }
+
+  const text = getSingleOption(options, "text");
+
+  if (!text) {
+    throw new Error("Live comment requires --text or --body-json.");
+  }
+
+  return {
+    kind: "text",
+    value: text,
+  };
+}
+
+function buildLiveStartRequest(
+  options: Map<string, string[]>,
+): LiveStartRequest {
+  const rawBody = getSingleOption(options, "body-json");
+
+  if (rawBody) {
+    return parseJsonOption<LiveStartRequest>(rawBody, "--body-json");
+  }
+
+  const genreId = requireOption(options, "genre-id");
+  const tags = options.get("tag") ?? [];
+
+  return compactObject({
+    genreId,
+    tags,
+    canEnter: parseOptionalBooleanOption(options, "can-enter") ?? true,
+  }) as LiveStartRequest;
+}
+
+function buildLiveCommentListOptions(
+  options: Map<string, string[]>,
+  defaultOrderDirection = "desc",
+): LiveCommentListOptions {
+  return compactObject({
+    limit: parseOptionalNumberOption(options, "limit"),
+    orderBy: getSingleOption(options, "order-by") ??
+      `created_at ${defaultOrderDirection}`,
+    pageToken: getSingleOption(options, "page-token"),
+  });
+}
+
+function buildSpaceMessageListOptions(
+  options: Map<string, string[]>,
+  defaultOrderDirection = "desc",
+): SpaceMessageListOptions {
+  return compactObject({
+    limit: parseOptionalNumberOption(options, "limit"),
+    orderBy: getSingleOption(options, "order-by") ??
+      `created_at ${defaultOrderDirection}`,
+    pageToken: getSingleOption(options, "page-token"),
   });
 }
 
@@ -1046,6 +1334,76 @@ function printResult(result: unknown, json: boolean): void {
   console.log(String(result));
 }
 
+function printLiveComment(comment: Record<string, unknown>, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(comment));
+    return;
+  }
+
+  const createdAt = formatCommentTimestamp(comment.createdAt);
+  const user = extractCommentUserLabel(comment.user);
+  const kind = typeof comment.kind === "string" ? comment.kind : "unknown";
+  const value = typeof comment.value === "string" ? comment.value : "";
+  const id = typeof comment.id === "string" ? comment.id : "";
+
+  console.log(
+    `${createdAt} [${kind}] ${user}${value ? `: ${value}` : ""} (${id})`,
+  );
+}
+
+function printSpaceMessage(message: Record<string, unknown>, json: boolean): void {
+  if (json) {
+    console.log(JSON.stringify(message));
+    return;
+  }
+
+  const createdAt = formatCommentTimestamp(message.createdAt);
+  const user = extractCommentUserLabel(message.user);
+  const kind = typeof message.kind === "string" ? message.kind : "unknown";
+  const value = typeof message.value === "string" ? message.value : "";
+  const id = typeof message.id === "string" ? message.id : "";
+
+  console.log(
+    `${createdAt} [${kind}] ${user}${value ? `: ${value}` : ""} (${id})`,
+  );
+}
+
+function extractCommentUserLabel(value: unknown): string {
+  if (!value || typeof value !== "object") {
+    return "unknown";
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if (typeof record.name === "string" && record.name.length > 0) {
+    return record.name;
+  }
+
+  if (typeof record.alias === "string" && record.alias.length > 0) {
+    return record.alias;
+  }
+
+  if (typeof record.id === "string" && record.id.length > 0) {
+    return record.id;
+  }
+
+  return "unknown";
+}
+
+function formatCommentTimestamp(value: unknown): string {
+  const millis = typeof value === "number"
+    ? value
+    : typeof value === "string"
+      ? Number(value)
+      : NaN;
+
+  if (!Number.isFinite(millis)) {
+    return "unknown-time";
+  }
+
+  return new Date(millis).toISOString();
+}
+
 function printHelp(): void {
   console.log(
     [
@@ -1080,14 +1438,24 @@ function printHelp(): void {
       "Other commands:",
       "  uset coins balance [--user-id <id>]",
       "  uset coins user-private-data [--user-id <id>]",
+      "  uset spaces create --name <name> --background-id <background-id>",
+      "  uset spaces connect --space-key <space-key> [--muted <true|false>]",
       "  uset lives list [--kind <value>] [--category <value>] [--query key=value]",
       "  uset lives current [--kind <value>] [--category <value>] [--query key=value]",
       "  uset lives get --space-key <space-key> [--kind <value>] [--category <value>] [--query key=value]",
       "  uset lives list --space-key <space-key> [--kind <value>] [--category <value>] [--query key=value]",
+      "  uset lives start --space-key <space-key> --genre-id <genre-id> [--tag <tag>] [--can-enter <true|false>]",
+      "  uset lives enter --space-key <space-key>",
+      "  uset lives comment --space-key <space-key> [--live-id <live-id>] --text <text>",
+      "  uset lives comments --space-key <space-key> [--live-id <live-id>] [--limit <n>] [--order-by <field dir>]",
+      "  uset lives watch --space-key <space-key> [--live-id <live-id>] [--limit <n>] [--interval-ms <ms>] [--timeout-ms <ms>]",
       "  uset spaces list [--kind <value>] [--category <value>] [--query key=value]",
       "  uset spaces current [--kind <value>] [--category <value>] [--query key=value]",
       "  uset spaces get --space-key <space-key> [--kind <value>] [--category <value>] [--query key=value]",
       "  uset spaces connection-info --space-key <space-key> [--body-json <json>]",
+      "  uset spaces message --space-key <space-key> --text <text>",
+      "  uset spaces messages --space-key <space-key> [--limit <n>] [--order-by <field dir>]",
+      "  uset spaces watch --space-key <space-key> [--limit <n>] [--interval-ms <ms>] [--timeout-ms <ms>]",
       "  uset invites list [--query key=value]",
       "  uset invites get --code <invite-code>",
       "  uset invites accept --code <invite-code>",
@@ -1145,6 +1513,12 @@ function printHelp(): void {
       "  --session-info <value>",
       "  --phone-number <E164>",
       "  --space-key <value>",
+      "  --live-id <value>",
+      "  --text <value>",
+      "  --limit <n>",
+      "  --order-by <field dir>",
+      "  --page-token <value>",
+      "  --interval-ms <ms>           default: 3000 for `uset lives watch`",
       "  --temporary-proof <value>",
       "  --tenant-id <value>",
       "  --no-auto-create",
