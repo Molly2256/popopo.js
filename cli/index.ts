@@ -295,12 +295,13 @@ async function runLivesSubcommand(
     case "list":
     case undefined: {
       const spaceKey = getSingleOption(options, "space-key");
+      const request = buildHomeDisplaySpacesRequest(options);
 
       if (spaceKey) {
-        return client.lives.listBySpace(spaceKey, parseQueryOptions(options));
+        return client.lives.listBySpace(spaceKey, request, parseQueryOptions(options));
       }
 
-      return client.lives.list(parseQueryOptions(options));
+      return client.lives.list(request, parseQueryOptions(options));
     }
     default:
       throw new Error("Unknown lives subcommand.");
@@ -583,6 +584,15 @@ function buildUserPatch(options: Map<string, string[]>): AccountProfilePatch {
     ownerUserId: getSingleOption(options, "owner-user-id"),
     photoUrl: getSingleOption(options, "photo-url"),
   }) as AccountProfilePatch;
+}
+
+function buildHomeDisplaySpacesRequest(
+  options: Map<string, string[]>,
+): Record<string, unknown> {
+  return compactObject({
+    kind: getSingleOption(options, "kind"),
+    category: getSingleOption(options, "category"),
+  });
 }
 
 function createClient(
@@ -952,7 +962,7 @@ function printHelp(): void {
       "  uset user change owner-user-id [--user-id <id>]",
       "",
       "Other commands:",
-      "  uset lives list [--space-key <space-key>] [--query key=value]",
+      "  uset lives list [--space-key <space-key>] [--kind <value>] [--category <value>] [--query key=value]",
       "  uset spaces list [--query key=value]",
       "  uset spaces get --space-id <id>",
       "  uset invites list [--query key=value]",
@@ -1005,6 +1015,8 @@ function printHelp(): void {
       "  --oauth-access-token <token>",
       "  --oauth-token-secret <token>",
       "  --auth-code <code>",
+      "  --kind <value>",
+      "  --category <value>",
       "  --nonce <value>",
       "  --request-uri <url>            default: http://localhost",
       "  --session-info <value>",

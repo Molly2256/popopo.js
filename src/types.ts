@@ -115,6 +115,12 @@ export interface HomeDisplaySpacesResponse {
   [key: string]: unknown;
 }
 
+export interface HomeDisplaySpacesRequest {
+  kind?: string;
+  category?: string;
+  [key: string]: unknown;
+}
+
 export interface Invite {
   code?: string;
   id?: string;

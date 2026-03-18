@@ -31,6 +31,7 @@ import type {
   FirebaseSendOobCodeRequest,
   FirebaseTokenRefreshResponse,
   FirebaseVerifyPhoneNumberRequest,
+  HomeDisplaySpacesRequest,
   HomeDisplaySpacesResponse,
   Invite,
   LiveListItem,
@@ -1119,28 +1120,32 @@ export class LivesClient {
   constructor(private readonly runtime: ClientRuntime) {}
 
   list<TResponse = HomeDisplaySpacesResponse>(
+    request: HomeDisplaySpacesRequest = {},
     query?: RequestQuery,
   ): Promise<TResponse> {
     return this.runtime.http.request<TResponse>({
-      method: "GET",
+      method: "POST",
       url: buildAbsoluteUrl(
         this.runtime.options.apiBaseUrl,
         "/api/v2/users/me/home-display-spaces",
       ),
+      body: request,
       query,
     });
   }
 
   listBySpace<TResponse = LiveListItem[]>(
     spaceKey: string,
+    body: Record<string, unknown> = {},
     query?: RequestQuery,
   ): Promise<TResponse> {
     return this.runtime.http.request<TResponse>({
-      method: "GET",
+      method: "POST",
       url: buildAbsoluteUrl(
         this.runtime.options.apiBaseUrl,
         `/api/v2/spaces/${encodeURIComponent(spaceKey)}/lives`,
       ),
+      body,
       query,
     });
   }
