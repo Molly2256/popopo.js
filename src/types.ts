@@ -78,6 +78,43 @@ export interface Space {
   [key: string]: unknown;
 }
 
+export interface LiveListItem {
+  id?: string;
+  liveId?: string;
+  spaceId?: string;
+  spaceKey?: string;
+  slug?: string;
+  title?: string;
+  name?: string;
+  description?: string;
+  status?: string;
+  startedAt?: string;
+  endedAt?: string;
+  scheduledStartAt?: string;
+  viewerCount?: number;
+  thumbnailUrl?: string;
+  [key: string]: unknown;
+}
+
+export interface HomeDisplaySpace {
+  id?: string;
+  spaceId?: string;
+  spaceKey?: string;
+  slug?: string;
+  name?: string;
+  title?: string;
+  lives?: LiveListItem[];
+  currentLive?: LiveListItem;
+  [key: string]: unknown;
+}
+
+export interface HomeDisplaySpacesResponse {
+  spaces?: HomeDisplaySpace[];
+  lives?: LiveListItem[];
+  totalCount?: number;
+  [key: string]: unknown;
+}
+
 export interface Invite {
   code?: string;
   id?: string;
@@ -121,6 +158,20 @@ export interface FirebaseCustomTokenSignInRequest {
   persistSession?: boolean;
 }
 
+export interface FirebaseAnonymousSignInRequest {
+  persistSession?: boolean;
+}
+
+export interface FirebaseIdpCredentialInput {
+  providerId: string;
+  oauthIdToken?: string;
+  oauthAccessToken?: string;
+  oauthTokenSecret?: string;
+  authCode?: string;
+  nonce?: string;
+  identifier?: string;
+}
+
 export interface FirebaseIdpSignInRequest {
   requestUri?: string;
   postBody: string;
@@ -131,6 +182,18 @@ export interface FirebaseIdpSignInRequest {
   pendingToken?: string;
   sessionId?: string;
   captchaResponse?: string;
+  tenantId?: string;
+  persistSession?: boolean;
+}
+
+export interface FirebaseIdpLinkRequest extends FirebaseIdpCredentialInput {
+  idToken?: string;
+  requestUri?: string;
+  returnIdpCredential?: boolean;
+  returnSecureToken?: boolean;
+  autoCreate?: boolean;
+  pendingToken?: string;
+  sessionId?: string;
   tenantId?: string;
   persistSession?: boolean;
 }
@@ -146,6 +209,47 @@ export interface FirebaseAuthSession {
   registered?: boolean;
   photoUrl?: string;
   raw: Record<string, unknown>;
+}
+
+export interface FirebaseIdpLinkResult {
+  session?: FirebaseAuthSession;
+  providerId?: string;
+  email?: string;
+  rawUserInfo?: string;
+  isNewUser?: boolean;
+  needConfirmation?: boolean;
+  pendingToken?: string;
+  tenantId?: string;
+  errorMessage?: string;
+  raw: Record<string, unknown>;
+}
+
+export interface FirebaseFlutterCredentialRequest {
+  token?: number;
+  signInMethod:
+    | "twitter.com"
+    | "playgames.google.com"
+    | "google.com"
+    | "facebook.com"
+    | "oauth"
+    | "phone"
+    | "password"
+    | "github.com"
+    | "emailLink";
+  providerId?: string;
+  secret?: string;
+  idToken?: string;
+  accessToken?: string;
+  rawNonce?: string;
+  verificationId?: string;
+  smsCode?: string;
+  email?: string;
+  emailLink?: string;
+  serverAuthCode?: string;
+  captchaResponse?: string;
+  clientType?: string;
+  recaptchaVersion?: string;
+  persistSession?: boolean;
 }
 
 export interface FirebaseTokenRefreshResponse {
@@ -178,6 +282,78 @@ export interface FirebaseAccountInfo {
 export interface FirebaseLookupResponse {
   kind?: string;
   users?: FirebaseAccountInfo[];
+  raw: Record<string, unknown>;
+}
+
+export interface FirebasePhoneVerificationCodeRequest {
+  phoneNumber: string;
+  recaptchaToken?: string;
+  playIntegrityToken?: string;
+  captchaResponse?: string;
+  clientType?: string;
+  recaptchaVersion?: string;
+  appSignatureHash?: string;
+  tenantId?: string;
+}
+
+export interface FirebaseVerifyPhoneNumberRequest {
+  phoneNumber?: string;
+  timeoutMs: number;
+  forceResendingToken?: number;
+  autoRetrievedSmsCodeForTesting?: string;
+  multiFactorSessionId?: string;
+  multiFactorInfoUid?: string;
+  recaptchaToken?: string;
+  playIntegrityToken?: string;
+  captchaResponse?: string;
+  clientType?: string;
+  recaptchaVersion?: string;
+  appSignatureHash?: string;
+  tenantId?: string;
+}
+
+export interface FirebasePhoneVerificationSession {
+  sessionInfo: string;
+  raw: Record<string, unknown>;
+}
+
+export interface FirebasePhoneVerificationEvent {
+  name:
+    | "Auth#phoneCodeSent"
+    | "Auth#phoneCodeAutoRetrievalTimeout"
+    | "Auth#phoneVerificationCompleted"
+    | "Auth#phoneVerificationFailed";
+  verificationId?: string;
+  forceResendingToken?: number;
+  token?: number;
+  smsCode?: string;
+  error?: {
+    code?: string;
+    message?: string;
+    details?: unknown;
+  };
+  raw: Record<string, unknown>;
+}
+
+export interface FirebasePhoneLinkRequest {
+  idToken?: string;
+  sessionInfo?: string;
+  code?: string;
+  phoneNumber?: string;
+  temporaryProof?: string;
+  operation?: number;
+  tenantId?: string;
+  persistSession?: boolean;
+}
+
+export interface FirebasePhoneAuthResult {
+  session?: FirebaseAuthSession;
+  phoneNumber?: string;
+  temporaryProof?: string;
+  temporaryProofExpiresIn?: number;
+  verificationProof?: string;
+  verificationProofExpiresIn?: number;
+  isNewUser?: boolean;
   raw: Record<string, unknown>;
 }
 

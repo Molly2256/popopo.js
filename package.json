@@ -2,6 +2,9 @@
   "name": "client_lib",
   "module": "index.ts",
   "exports": "./index.ts",
+  "bin": {
+    "uset": "./cli/index.ts"
+  },
   "type": "module",
   "private": true,
   "scripts": {

@@ -10,17 +10,30 @@ import type {
   AuthState,
   DeepPartial,
   FirebaseAccountInfo,
+  FirebaseAnonymousSignInRequest,
   FirebaseAuthSession,
   FirebaseClientConfig,
   FirebaseCustomTokenSignInRequest,
+  FirebaseIdpCredentialInput,
+  FirebaseIdpLinkRequest,
+  FirebaseIdpLinkResult,
   FirebaseEmailPasswordSignInRequest,
   FirebaseEmailPasswordSignUpRequest,
   FirebaseIdpSignInRequest,
   FirebaseLookupResponse,
+  FirebaseFlutterCredentialRequest,
+  FirebasePhoneAuthResult,
+  FirebasePhoneLinkRequest,
+  FirebasePhoneVerificationEvent,
+  FirebasePhoneVerificationCodeRequest,
+  FirebasePhoneVerificationSession,
   FirebaseProfileUpdateRequest,
   FirebaseSendOobCodeRequest,
   FirebaseTokenRefreshResponse,
+  FirebaseVerifyPhoneNumberRequest,
+  HomeDisplaySpacesResponse,
   Invite,
+  LiveListItem,
   NameplateNormalDisplayedMessage,
   NameplateSpecialDisplayedMessage,
   NotificationItem,
@@ -42,6 +55,7 @@ import type {
 } from "./types.ts";
 
 export const DEFAULT_POPOPO_BASE_URL = "https://www.popopo.com";
+export const DEFAULT_POPOPO_API_BASE_URL = "https://api.popopo.com";
 export const DEFAULT_FIREBASE_API_KEY = "AIzaSyAmY4T-_U3IGS_TvD5ERQsr2HQsHUmaapc";
 export const DEFAULT_FIREBASE_APP_ID =
   "1:209007912111:android:a92e14f304f77c0c33e05a";
@@ -72,6 +86,7 @@ export const DEFAULT_FIREBASE_CONFIG: FirebaseClientConfig = {
 
 export interface PopopoClientOptions {
   baseUrl?: string;
+  apiBaseUrl?: string;
   apiBasePath?: string;
   fetch?: FetchLike;
   headers?: HeadersInit;
@@ -83,6 +98,7 @@ export interface PopopoClientOptions {
 
 interface ResolvedClientOptions {
   baseUrl: string;
+  apiBaseUrl: string;
   apiBasePath: string;
   firebase: FirebaseClientConfig;
   tso: TsoClientConfig;
@@ -99,6 +115,7 @@ export class PopopoClient {
   readonly auth: FirebaseAuthClient;
   readonly accounts: AccountsClient;
   readonly spaces: SpacesClient;
+  readonly lives: LivesClient;
   readonly invites: InvitesClient;
   readonly notifications: NotificationsClient;
   readonly scenes: ScenesClient;
@@ -133,6 +150,7 @@ export class PopopoClient {
     this.auth = new FirebaseAuthClient(this.runtime);
     this.accounts = new AccountsClient(this.runtime);
     this.spaces = new SpacesClient(this.runtime);
+    this.lives = new LivesClient(this.runtime);
     this.invites = new InvitesClient(this.runtime);
     this.notifications = new NotificationsClient(this.runtime);
     this.scenes = new ScenesClient(this.runtime);
@@ -156,6 +174,34 @@ export class PopopoClient {
 
 export class FirebaseAuthClient {
   constructor(private readonly runtime: ClientRuntime) {}
+
+  async signInAnonymously(
+    input: FirebaseAnonymousSignInRequest = {},
+  ): Promise<FirebaseAuthSession> {
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "signupNewUser",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: withAndroidClientInfo(
+        compactObject({
+          tenantId: this.runtime.options.firebase.tenantId,
+        }),
+      ),
+    });
+    const session = toFirebaseSession(payload);
+
+    if (input.persistSession !== false) {
+      applyFirebaseSession(this.runtime.http, session);
+    }
+
+    return session;
+  }
 
   async signUpWithEmailPassword(
     input: FirebaseEmailPasswordSignUpRequest,
@@ -277,7 +323,7 @@ export class FirebaseAuthClient {
       body: compactObject({
         requestUri:
           input.requestUri ??
-          `https://${this.runtime.options.firebase.authDomain}`,
+          "http://localhost",
         postBody: input.postBody,
         returnSecureToken:
           input.returnSecureToken ?? this.runtime.options.firebase.returnSecureToken,
@@ -297,6 +343,507 @@ export class FirebaseAuthClient {
     }
 
     return session;
+  }
+
+  async signInWithCredential(
+    input: FirebaseFlutterCredentialRequest,
+  ): Promise<FirebaseAuthSession | FirebasePhoneAuthResult | FirebaseIdpLinkResult> {
+    if (input.token !== undefined) {
+      throw new PopopoConfigurationError(
+        "Native credential token reuse is not supported in this CLI. Pass the credential fields explicitly.",
+      );
+    }
+
+    switch (input.signInMethod) {
+      case "google.com":
+        return this.signInWithIdp({
+          postBody: buildIdpPostBody({
+            providerId: "google.com",
+            oauthIdToken: input.idToken,
+            oauthAccessToken: input.accessToken,
+          }),
+          requestUri: "http://localhost",
+          persistSession: input.persistSession,
+        });
+      case "facebook.com":
+        return this.signInWithIdp({
+          postBody: buildIdpPostBody({
+            providerId: "facebook.com",
+            oauthAccessToken: requireDefined(input.accessToken, "accessToken"),
+          }),
+          requestUri: "http://localhost",
+          persistSession: input.persistSession,
+        });
+      case "github.com":
+        return this.signInWithIdp({
+          postBody: buildIdpPostBody({
+            providerId: "github.com",
+            oauthAccessToken: requireDefined(input.accessToken, "accessToken"),
+          }),
+          requestUri: "http://localhost",
+          persistSession: input.persistSession,
+        });
+      case "twitter.com":
+        return this.signInWithIdp({
+          postBody: buildIdpPostBody({
+            providerId: "twitter.com",
+            oauthAccessToken: requireDefined(input.accessToken, "accessToken"),
+            oauthTokenSecret: requireDefined(input.secret, "secret"),
+          }),
+          requestUri: "http://localhost",
+          persistSession: input.persistSession,
+        });
+      case "playgames.google.com":
+        return this.signInWithIdp({
+          postBody: buildIdpPostBody({
+            providerId: "playgames.google.com",
+            authCode: requireDefined(input.serverAuthCode, "serverAuthCode"),
+          }),
+          requestUri: "http://localhost",
+          persistSession: input.persistSession,
+        });
+      case "oauth":
+        return this.signInWithIdp({
+          postBody: buildIdpPostBody({
+            providerId: requireDefined(input.providerId, "providerId"),
+            oauthIdToken: input.idToken,
+            oauthAccessToken: input.accessToken,
+            nonce: input.rawNonce,
+          }),
+          requestUri: "http://localhost",
+          persistSession: input.persistSession,
+        });
+      case "phone":
+        return this.signInWithPhoneNumber({
+          sessionInfo: requireDefined(input.verificationId, "verificationId"),
+          code: requireDefined(input.smsCode, "smsCode"),
+          persistSession: input.persistSession,
+        });
+      case "password":
+        return this.signInWithEmailPassword({
+          email: requireDefined(input.email, "email"),
+          password: requireDefined(input.secret, "secret"),
+          captchaResponse: input.captchaResponse,
+          clientType: input.clientType,
+          recaptchaVersion: input.recaptchaVersion,
+          persistSession: input.persistSession,
+        });
+      case "emailLink":
+        return this.signInWithEmailLink({
+          email: requireDefined(input.email, "email"),
+          emailLink: requireDefined(input.emailLink, "emailLink"),
+          captchaResponse: input.captchaResponse,
+          persistSession: input.persistSession,
+        });
+      default:
+        throw new PopopoConfigurationError(
+          `Unsupported signInMethod: ${(input as { signInMethod: string }).signInMethod}`,
+        );
+    }
+  }
+
+  async linkWithIdp(
+    input: FirebaseIdpLinkRequest,
+  ): Promise<FirebaseIdpLinkResult> {
+    const idToken =
+      input.idToken ??
+      this.runtime.http.getSession().firebaseIdToken ??
+      this.runtime.http.getSession().bearerToken;
+
+    if (!idToken) {
+      throw new PopopoConfigurationError("No Firebase ID token is available.");
+    }
+
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "verifyAssertion",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: compactObject({
+        requestUri: input.requestUri ?? "http://localhost",
+        postBody: buildIdpPostBody(input),
+        returnSecureToken:
+          input.returnSecureToken ?? this.runtime.options.firebase.returnSecureToken,
+        returnIdpCredential: input.returnIdpCredential,
+        autoCreate: input.autoCreate,
+        idToken,
+        pendingToken: input.pendingToken,
+        sessionId: input.sessionId,
+        tenantId: input.tenantId ?? this.runtime.options.firebase.tenantId,
+      }),
+    });
+    const result = toFirebaseIdpLinkResult(payload);
+
+    if (result.session && input.persistSession !== false) {
+      applyFirebaseSession(this.runtime.http, result.session);
+    }
+
+    return result;
+  }
+
+  async linkWithCredential(
+    input: FirebaseFlutterCredentialRequest,
+  ): Promise<FirebaseAuthSession | FirebasePhoneAuthResult | FirebaseIdpLinkResult> {
+    if (input.token !== undefined) {
+      throw new PopopoConfigurationError(
+        "Native credential token reuse is not supported in this CLI. Pass the credential fields explicitly.",
+      );
+    }
+
+    switch (input.signInMethod) {
+      case "google.com":
+        return this.linkWithIdp({
+          providerId: "google.com",
+          oauthIdToken: input.idToken,
+          oauthAccessToken: input.accessToken,
+          persistSession: input.persistSession,
+        });
+      case "facebook.com":
+        return this.linkWithIdp({
+          providerId: "facebook.com",
+          oauthAccessToken: requireDefined(input.accessToken, "accessToken"),
+          persistSession: input.persistSession,
+        });
+      case "github.com":
+        return this.linkWithIdp({
+          providerId: "github.com",
+          oauthAccessToken: requireDefined(input.accessToken, "accessToken"),
+          persistSession: input.persistSession,
+        });
+      case "twitter.com":
+        return this.linkWithIdp({
+          providerId: "twitter.com",
+          oauthAccessToken: requireDefined(input.accessToken, "accessToken"),
+          oauthTokenSecret: requireDefined(input.secret, "secret"),
+          persistSession: input.persistSession,
+        });
+      case "playgames.google.com":
+        return this.linkWithIdp({
+          providerId: "playgames.google.com",
+          authCode: requireDefined(input.serverAuthCode, "serverAuthCode"),
+          persistSession: input.persistSession,
+        });
+      case "oauth":
+        return this.linkWithIdp({
+          providerId: requireDefined(input.providerId, "providerId"),
+          oauthIdToken: input.idToken,
+          oauthAccessToken: input.accessToken,
+          nonce: input.rawNonce,
+          persistSession: input.persistSession,
+        });
+      case "phone":
+        return this.updatePhoneNumber({
+          verificationId: requireDefined(input.verificationId, "verificationId"),
+          verificationCode: requireDefined(input.smsCode, "smsCode"),
+          persistSession: input.persistSession,
+        });
+      case "password":
+        return this.linkWithEmailPassword({
+          email: requireDefined(input.email, "email"),
+          password: requireDefined(input.secret, "secret"),
+          captchaResponse: input.captchaResponse,
+          clientType: input.clientType,
+          recaptchaVersion: input.recaptchaVersion,
+          persistSession: input.persistSession,
+        });
+      case "emailLink":
+        return this.linkWithEmailLink({
+          email: requireDefined(input.email, "email"),
+          emailLink: requireDefined(input.emailLink, "emailLink"),
+          captchaResponse: input.captchaResponse,
+          persistSession: input.persistSession,
+        });
+      default:
+        throw new PopopoConfigurationError(
+          `Unsupported signInMethod: ${(input as { signInMethod: string }).signInMethod}`,
+        );
+    }
+  }
+
+  async linkWithEmailPassword(input: {
+    email: string;
+    password: string;
+    captchaResponse?: string;
+    clientType?: string;
+    recaptchaVersion?: string;
+    persistSession?: boolean;
+  }): Promise<FirebaseAuthSession> {
+    const idToken =
+      this.runtime.http.getSession().firebaseIdToken ??
+      this.runtime.http.getSession().bearerToken;
+
+    if (!idToken) {
+      throw new PopopoConfigurationError("No Firebase ID token is available.");
+    }
+
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "signupNewUser",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: withAndroidClientInfo(
+        compactObject({
+          email: input.email,
+          password: input.password,
+          tenantId: this.runtime.options.firebase.tenantId,
+          idToken,
+        }),
+        input.captchaResponse,
+        input.clientType,
+        input.recaptchaVersion,
+      ),
+    });
+    const session = toFirebaseSession(payload);
+
+    if (input.persistSession !== false) {
+      applyFirebaseSession(this.runtime.http, session);
+    }
+
+    return session;
+  }
+
+  async signInWithEmailLink(input: {
+    email: string;
+    emailLink: string;
+    captchaResponse?: string;
+    persistSession?: boolean;
+  }): Promise<FirebaseAuthSession> {
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "emailLinkSignin",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: withAndroidClientInfo(
+        compactObject(buildEmailLinkBody(input.email, input.emailLink)),
+        input.captchaResponse,
+      ),
+    });
+    const session = toFirebaseSession(payload);
+
+    if (input.persistSession !== false) {
+      applyFirebaseSession(this.runtime.http, session);
+    }
+
+    return session;
+  }
+
+  async linkWithEmailLink(input: {
+    email: string;
+    emailLink: string;
+    captchaResponse?: string;
+    persistSession?: boolean;
+  }): Promise<FirebaseAuthSession> {
+    const idToken =
+      this.runtime.http.getSession().firebaseIdToken ??
+      this.runtime.http.getSession().bearerToken;
+
+    if (!idToken) {
+      throw new PopopoConfigurationError("No Firebase ID token is available.");
+    }
+
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "emailLinkSignin",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: withAndroidClientInfo(
+        compactObject({
+          ...buildEmailLinkBody(input.email, input.emailLink),
+          idToken,
+        }),
+        input.captchaResponse,
+      ),
+    });
+    const session = toFirebaseSession(payload);
+
+    if (input.persistSession !== false) {
+      applyFirebaseSession(this.runtime.http, session);
+    }
+
+    return session;
+  }
+
+  async sendPhoneVerificationCode(
+    input: FirebasePhoneVerificationCodeRequest,
+  ): Promise<FirebasePhoneVerificationSession> {
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "sendVerificationCode",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: withAndroidClientInfo(
+        compactObject({
+          phoneNumber: input.phoneNumber,
+          tenantId: input.tenantId ?? this.runtime.options.firebase.tenantId,
+          recaptchaToken: input.recaptchaToken,
+          playIntegrityToken: input.playIntegrityToken,
+          autoRetrievalInfo: input.appSignatureHash
+            ? {
+                appSignatureHash: input.appSignatureHash,
+              }
+            : undefined,
+        }),
+        input.captchaResponse,
+        input.clientType,
+        input.recaptchaVersion,
+      ),
+    });
+
+    return toFirebasePhoneVerificationSession(payload);
+  }
+
+  async verifyPhoneNumber(
+    input: FirebaseVerifyPhoneNumberRequest,
+  ): Promise<FirebasePhoneVerificationEvent> {
+    if (input.multiFactorSessionId || input.multiFactorInfoUid) {
+      throw new PopopoConfigurationError(
+        "MFA phone verification flow is not implemented in this CLI.",
+      );
+    }
+
+    const session = await this.sendPhoneVerificationCode({
+      phoneNumber: requireDefined(input.phoneNumber, "phoneNumber"),
+      recaptchaToken: input.recaptchaToken,
+      playIntegrityToken: input.playIntegrityToken,
+      captchaResponse: input.captchaResponse,
+      clientType: input.clientType,
+      recaptchaVersion: input.recaptchaVersion,
+      appSignatureHash: input.appSignatureHash,
+      tenantId: input.tenantId,
+    });
+
+    return {
+      name: "Auth#phoneCodeSent",
+      verificationId: session.sessionInfo,
+      forceResendingToken: input.forceResendingToken,
+      raw: session.raw,
+    };
+  }
+
+  async signInWithPhoneNumber(input: {
+    sessionInfo?: string;
+    code?: string;
+    phoneNumber?: string;
+    temporaryProof?: string;
+    operation?: number;
+    tenantId?: string;
+    persistSession?: boolean;
+  }): Promise<FirebasePhoneAuthResult> {
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "verifyPhoneNumber",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: compactObject({
+        sessionInfo: input.sessionInfo,
+        code: input.code,
+        phoneNumber: input.phoneNumber,
+        temporaryProof: input.temporaryProof,
+        operation: input.operation,
+        tenantId: input.tenantId ?? this.runtime.options.firebase.tenantId,
+      }),
+    });
+    const result = toFirebasePhoneAuthResult(payload);
+
+    if (result.session && input.persistSession !== false) {
+      applyFirebaseSession(this.runtime.http, result.session);
+    }
+
+    return result;
+  }
+
+  async linkWithPhoneNumber(
+    input: FirebasePhoneLinkRequest,
+  ): Promise<FirebasePhoneAuthResult> {
+    const idToken =
+      input.idToken ??
+      this.runtime.http.getSession().firebaseIdToken ??
+      this.runtime.http.getSession().bearerToken;
+
+    if (!idToken) {
+      throw new PopopoConfigurationError("No Firebase ID token is available.");
+    }
+
+    const isSessionFlow = Boolean(input.sessionInfo || input.code);
+    const isTemporaryProofFlow = Boolean(input.phoneNumber || input.temporaryProof);
+
+    if (!isSessionFlow && !isTemporaryProofFlow) {
+      throw new PopopoConfigurationError(
+        "Phone linking requires --session-info and --code, or --phone-number and --temporary-proof.",
+      );
+    }
+
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "POST",
+      url: buildFirebaseUrl(
+        this.runtime.options.firebase.authBaseUrl,
+        "verifyPhoneNumber",
+      ),
+      auth: "none",
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+      body: compactObject({
+        idToken,
+        sessionInfo: input.sessionInfo,
+        code: input.code,
+        phoneNumber: input.phoneNumber,
+        temporaryProof: input.temporaryProof,
+        operation: input.operation,
+        tenantId: input.tenantId ?? this.runtime.options.firebase.tenantId,
+      }),
+    });
+    const result = toFirebasePhoneAuthResult(payload);
+
+    if (result.session && input.persistSession !== false) {
+      applyFirebaseSession(this.runtime.http, result.session);
+    }
+
+    return result;
+  }
+
+  async updatePhoneNumber(input: {
+    verificationId: string;
+    verificationCode: string;
+    idToken?: string;
+    persistSession?: boolean;
+  }): Promise<FirebasePhoneAuthResult> {
+    return this.linkWithPhoneNumber({
+      idToken: input.idToken,
+      sessionInfo: input.verificationId,
+      code: input.verificationCode,
+      persistSession: input.persistSession,
+    });
   }
 
   async refreshFirebaseIdToken(
@@ -568,6 +1115,37 @@ export class SpacesClient {
   }
 }
 
+export class LivesClient {
+  constructor(private readonly runtime: ClientRuntime) {}
+
+  list<TResponse = HomeDisplaySpacesResponse>(
+    query?: RequestQuery,
+  ): Promise<TResponse> {
+    return this.runtime.http.request<TResponse>({
+      method: "GET",
+      url: buildAbsoluteUrl(
+        this.runtime.options.apiBaseUrl,
+        "/api/v2/users/me/home-display-spaces",
+      ),
+      query,
+    });
+  }
+
+  listBySpace<TResponse = LiveListItem[]>(
+    spaceKey: string,
+    query?: RequestQuery,
+  ): Promise<TResponse> {
+    return this.runtime.http.request<TResponse>({
+      method: "GET",
+      url: buildAbsoluteUrl(
+        this.runtime.options.apiBaseUrl,
+        `/api/v2/spaces/${encodeURIComponent(spaceKey)}/lives`,
+      ),
+      query,
+    });
+  }
+}
+
 export class InvitesClient {
   constructor(private readonly runtime: ClientRuntime) {}
 
@@ -835,6 +1413,7 @@ export class TsoClient {
 function resolveClientOptions(options: PopopoClientOptions): ResolvedClientOptions {
   return {
     baseUrl: options.baseUrl ?? DEFAULT_POPOPO_BASE_URL,
+    apiBaseUrl: options.apiBaseUrl ?? DEFAULT_POPOPO_API_BASE_URL,
     apiBasePath: options.apiBasePath ?? "",
     firebase: {
       apiKey: options.firebase?.apiKey ?? DEFAULT_FIREBASE_CONFIG.apiKey,
@@ -882,6 +1461,70 @@ function buildAbsoluteUrl(baseUrl: string, suffix: string): string {
   return url.toString();
 }
 
+function buildIdpPostBody(input: FirebaseIdpCredentialInput): string {
+  const postBody = new URLSearchParams();
+
+  if (input.oauthIdToken) {
+    postBody.set("id_token", input.oauthIdToken);
+  }
+
+  if (input.oauthAccessToken) {
+    postBody.set("access_token", input.oauthAccessToken);
+  }
+
+  if (input.identifier) {
+    postBody.set("identifier", input.identifier);
+  }
+
+  if (input.oauthTokenSecret) {
+    postBody.set("oauth_token_secret", input.oauthTokenSecret);
+  }
+
+  if (input.authCode) {
+    postBody.set("code", input.authCode);
+  }
+
+  if (input.nonce) {
+    postBody.set("nonce", input.nonce);
+  }
+
+  if (![...postBody.keys()].some((key) => key !== "identifier")) {
+    throw new PopopoConfigurationError(
+      "IDP linking requires at least one provider token or auth code.",
+    );
+  }
+
+  postBody.set("providerId", input.providerId);
+  return postBody.toString();
+}
+
+function buildEmailLinkBody(
+  email: string,
+  emailLink: string,
+): Record<string, string | undefined> {
+  const parsed = tryParseEmailLink(emailLink);
+
+  return {
+    email,
+    oobCode: parsed?.oobCode,
+    tenantId: parsed?.tenantId,
+  };
+}
+
+function tryParseEmailLink(
+  emailLink: string,
+): { oobCode?: string; tenantId?: string } | undefined {
+  try {
+    const url = new URL(emailLink);
+    return {
+      oobCode: url.searchParams.get("oobCode") ?? undefined,
+      tenantId: url.searchParams.get("tenantId") ?? undefined,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 function ensureTrailingSlash(url: string): string {
   return url.endsWith("/") ? url : `${url}/`;
 }
@@ -902,6 +1545,26 @@ function toFirebaseSession(payload: Record<string, unknown>): FirebaseAuthSessio
     displayName: asOptionalString(payload.displayName),
     registered: typeof payload.registered === "boolean" ? payload.registered : undefined,
     photoUrl: asOptionalString(payload.photoUrl),
+    raw: payload,
+  };
+}
+
+function toFirebaseIdpLinkResult(
+  payload: Record<string, unknown>,
+): FirebaseIdpLinkResult {
+  return {
+    session: maybeToFirebaseSession(payload),
+    providerId: asOptionalString(payload.providerId),
+    email: asOptionalString(payload.email),
+    rawUserInfo: asOptionalString(payload.rawUserInfo),
+    isNewUser: typeof payload.isNewUser === "boolean" ? payload.isNewUser : undefined,
+    needConfirmation:
+      typeof payload.needConfirmation === "boolean"
+        ? payload.needConfirmation
+        : undefined,
+    pendingToken: asOptionalString(payload.pendingToken),
+    tenantId: asOptionalString(payload.tenantId),
+    errorMessage: asOptionalString(payload.errorMessage),
     raw: payload,
   };
 }
@@ -928,6 +1591,34 @@ function toTsoTokenResponse(payload: Record<string, unknown>): TsoOAuthTokenResp
     accessToken: requiredString(payload, ["access_token", "accessToken"]),
     refreshToken: asOptionalString(payload.refresh_token),
     scope: asOptionalString(payload.scope),
+    raw: payload,
+  };
+}
+
+function toFirebasePhoneVerificationSession(
+  payload: Record<string, unknown>,
+): FirebasePhoneVerificationSession {
+  return {
+    sessionInfo: requiredString(payload, ["sessionInfo"]),
+    raw: payload,
+  };
+}
+
+function toFirebasePhoneAuthResult(
+  payload: Record<string, unknown>,
+): FirebasePhoneAuthResult {
+  return {
+    session: maybeToFirebaseSession(payload),
+    phoneNumber: asOptionalString(payload.phoneNumber),
+    temporaryProof: asOptionalString(payload.temporaryProof),
+    temporaryProofExpiresIn: optionalNumber(payload, [
+      "temporaryProofExpiresIn",
+    ]),
+    verificationProof: asOptionalString(payload.verificationProof),
+    verificationProofExpiresIn: optionalNumber(payload, [
+      "verificationProofExpiresIn",
+    ]),
+    isNewUser: typeof payload.isNewUser === "boolean" ? payload.isNewUser : undefined,
     raw: payload,
   };
 }
@@ -1040,8 +1731,57 @@ function requiredNumber(
   );
 }
 
+function optionalNumber(
+  payload: Record<string, unknown>,
+  keys: string[],
+): number | undefined {
+  for (const key of keys) {
+    const value = payload[key];
+
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (typeof value === "string" && value.trim() !== "") {
+      const parsed = Number(value);
+
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function maybeToFirebaseSession(
+  payload: Record<string, unknown>,
+): FirebaseAuthSession | undefined {
+  const hasIdToken = typeof payload.idToken === "string" || typeof payload.id_token === "string";
+  const hasRefreshToken =
+    typeof payload.refreshToken === "string" || typeof payload.refresh_token === "string";
+  const hasLocalId = typeof payload.localId === "string" || typeof payload.user_id === "string";
+
+  if (!hasIdToken || !hasRefreshToken || !hasLocalId) {
+    return undefined;
+  }
+
+  return toFirebaseSession(payload);
+}
+
 function asOptionalString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function requireDefined<T>(
+  value: T | undefined,
+  field: string,
+): T {
+  if (value === undefined || value === null || value === "") {
+    throw new PopopoConfigurationError(`Missing required credential field: ${field}`);
+  }
+
+  return value;
 }
 
 function compactObject(
