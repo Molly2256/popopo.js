@@ -86,7 +86,7 @@ async function dispatchCommand(
 
   switch (head) {
     case "anonymous":
-      return runAnonymousSignIn(client);
+      return runAnonymousSignIn(client, options);
     case "signup":
       return runSignUp(client, options, context.globalOptions);
     case "signin":
@@ -114,6 +114,9 @@ async function dispatchCommand(
     case "user":
     case "users":
       return runUserSubcommand(second, third, client, options);
+    case "coins":
+    case "coin":
+      return runCoinsSubcommand(second, client, options);
     case "lives":
       return runLivesSubcommand(second, client, options);
     case "spaces":
@@ -139,7 +142,7 @@ async function runAuthSubcommand(
 ): Promise<unknown> {
   switch (command) {
     case "anonymous":
-      return runAnonymousSignIn(client);
+      return runAnonymousSignIn(client, options);
     case "signup":
       return runSignUp(client, options, globalOptions);
     case "signin":
@@ -232,6 +235,10 @@ async function runUserSubcommand(
     return client.auth.linkWithCredential(buildFlutterCredentialRequest(options));
   }
 
+  if (command === "register") {
+    return client.accounts.register();
+  }
+
   if (command === "update-phone-number") {
     return client.auth.updatePhoneNumber({
       verificationId: requireOption(options, "verification-id", {
@@ -305,6 +312,25 @@ async function runLivesSubcommand(
     }
     default:
       throw new Error("Unknown lives subcommand.");
+  }
+}
+
+async function runCoinsSubcommand(
+  command: string | undefined,
+  client: PopopoClient,
+  options: Map<string, string[]>,
+): Promise<unknown> {
+  switch (command) {
+    case "balance":
+      return client.coins.getBalance(
+        getSingleOption(options, "user-id") ?? client.getSession().userId,
+      );
+    case "user-private-data":
+      return client.coins.getUserPrivateData(
+        getSingleOption(options, "user-id") ?? client.getSession().userId,
+      );
+    default:
+      throw new Error("Unknown coins subcommand.");
   }
 }
 
@@ -417,8 +443,21 @@ async function runSignIn(
   });
 }
 
-async function runAnonymousSignIn(client: PopopoClient): Promise<unknown> {
-  return client.auth.signInAnonymously();
+async function runAnonymousSignIn(
+  client: PopopoClient,
+  options: Map<string, string[]>,
+): Promise<unknown> {
+  const session = await client.auth.signInAnonymously();
+
+  if (hasFlag(options, "firebase-only")) {
+    return session;
+  }
+
+  const registration = await client.accounts.register();
+  return {
+    session,
+    registration,
+  };
 }
 
 function buildIdpUpgradeRequest(
@@ -938,7 +977,7 @@ function printHelp(): void {
       "  uset <command> [options]",
       "",
       "Core commands:",
-      "  uset anonymous",
+      "  uset anonymous [--firebase-only]",
       "  uset signup --email <email> --password <password> [--display-name <name>] [--alias <handle>]",
       "  uset signin --email <email> --password <password>",
       "  uset auth sign-in-with-credential --sign-in-method <method> [credential fields]",
@@ -953,6 +992,7 @@ function printHelp(): void {
       "",
       "User commands:",
       "  uset user get --user-id <id>",
+      "  uset user register",
       "  uset user link-with-credential --sign-in-method <method> [credential fields]",
       "  uset user update-phone-number --verification-id <id> --verification-code <code>",
       "  uset user update [--display-name <name>] [--alias <handle>] [--another-name <name>] [--icon-source <url>]",
@@ -962,6 +1002,8 @@ function printHelp(): void {
       "  uset user change owner-user-id [--user-id <id>]",
       "",
       "Other commands:",
+      "  uset coins balance [--user-id <id>]",
+      "  uset coins user-private-data [--user-id <id>]",
       "  uset lives list [--space-key <space-key>] [--kind <value>] [--category <value>] [--query key=value]",
       "  uset spaces list [--query key=value]",
       "  uset spaces get --space-id <id>",

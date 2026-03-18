@@ -26,6 +26,7 @@ export interface AuthState {
 export interface FirebaseClientConfig {
   apiKey: string;
   authBaseUrl: string;
+  firestoreBaseUrl: string;
   secureTokenBaseUrl: string;
   authDomain: string;
   appId: string;
@@ -66,6 +67,11 @@ export interface AccountProfilePatch {
   iconSource?: string;
   ownerUserId?: string;
   photoUrl?: string;
+  [key: string]: unknown;
+}
+
+export interface AccountRegisterResult {
+  result?: boolean;
   [key: string]: unknown;
 }
 
@@ -119,6 +125,30 @@ export interface HomeDisplaySpacesRequest {
   kind?: string;
   category?: string;
   [key: string]: unknown;
+}
+
+export interface FirestoreDocument<TFields = Record<string, unknown>> {
+  name: string;
+  createTime?: string;
+  updateTime?: string;
+  fields: TFields;
+  raw: Record<string, unknown>;
+}
+
+export interface UserPrivateData {
+  coinBalances?: unknown;
+  coinTransaction?: unknown;
+  [key: string]: unknown;
+}
+
+export interface CoinBalanceSnapshot {
+  userId: string;
+  documentPath: string;
+  paidCoins?: number;
+  freeCoins?: number;
+  coinBalances: Record<string, number>;
+  userPrivateData: UserPrivateData;
+  rawDocument: FirestoreDocument<UserPrivateData>;
 }
 
 export interface Invite {

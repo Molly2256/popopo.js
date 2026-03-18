@@ -6,6 +6,7 @@ import {
 import { PopopoConfigurationError } from "./errors.ts";
 import { HttpClient, type FetchLike, type RequestQuery } from "./http.ts";
 import type {
+  AccountRegisterResult,
   AccountProfilePatch,
   AuthState,
   DeepPartial,
@@ -31,6 +32,7 @@ import type {
   FirebaseSendOobCodeRequest,
   FirebaseTokenRefreshResponse,
   FirebaseVerifyPhoneNumberRequest,
+  FirestoreDocument,
   HomeDisplaySpacesRequest,
   HomeDisplaySpacesResponse,
   Invite,
@@ -49,14 +51,17 @@ import type {
   TsoFileStatusOptions,
   TsoOAuthTokenResponse,
   TsoRefreshTokenRequest,
+  UserPrivateData,
   UserAnotherNameChangeRequest,
   UserDisplayNameChangeRequest,
   UserIconSourceChangeRequest,
   UserProfile,
+  CoinBalanceSnapshot,
 } from "./types.ts";
 
 export const DEFAULT_POPOPO_BASE_URL = "https://www.popopo.com";
 export const DEFAULT_POPOPO_API_BASE_URL = "https://api.popopo.com";
+export const DEFAULT_FIRESTORE_BASE_URL = "https://firestore.googleapis.com/v1";
 export const DEFAULT_FIREBASE_API_KEY = "AIzaSyAmY4T-_U3IGS_TvD5ERQsr2HQsHUmaapc";
 export const DEFAULT_FIREBASE_APP_ID =
   "1:209007912111:android:a92e14f304f77c0c33e05a";
@@ -78,6 +83,7 @@ export const DEFAULT_FIREBASE_CONFIG: FirebaseClientConfig = {
   appId: DEFAULT_FIREBASE_APP_ID,
   authBaseUrl: DEFAULT_FIREBASE_AUTH_BASE_URL,
   authDomain: DEFAULT_FIREBASE_AUTH_DOMAIN,
+  firestoreBaseUrl: DEFAULT_FIRESTORE_BASE_URL,
   projectId: DEFAULT_FIREBASE_PROJECT_ID,
   secureTokenBaseUrl: DEFAULT_FIREBASE_SECURE_TOKEN_BASE_URL,
   storageBucket: DEFAULT_FIREBASE_STORAGE_BUCKET,
@@ -117,6 +123,7 @@ export class PopopoClient {
   readonly accounts: AccountsClient;
   readonly spaces: SpacesClient;
   readonly lives: LivesClient;
+  readonly coins: CoinsClient;
   readonly invites: InvitesClient;
   readonly notifications: NotificationsClient;
   readonly scenes: ScenesClient;
@@ -152,6 +159,7 @@ export class PopopoClient {
     this.accounts = new AccountsClient(this.runtime);
     this.spaces = new SpacesClient(this.runtime);
     this.lives = new LivesClient(this.runtime);
+    this.coins = new CoinsClient(this.runtime);
     this.invites = new InvitesClient(this.runtime);
     this.notifications = new NotificationsClient(this.runtime);
     this.scenes = new ScenesClient(this.runtime);
@@ -1017,6 +1025,16 @@ export class AccountsClient {
     return this.runtime.http.get<TResponse>(this.runtime.endpoints.users.me);
   }
 
+  register<TResponse = AccountRegisterResult>(
+    body: Record<string, unknown> = {},
+  ): Promise<TResponse> {
+    return this.runtime.http.request<TResponse>({
+      method: "POST",
+      url: buildAbsoluteUrl(this.runtime.options.apiBaseUrl, "/api/v2/users"),
+      body,
+    });
+  }
+
   list<TResponse = UserProfile[]>(query?: RequestQuery): Promise<TResponse> {
     return this.runtime.http.get<TResponse>(this.runtime.endpoints.users.collection, {
       query,
@@ -1148,6 +1166,56 @@ export class LivesClient {
       body,
       query,
     });
+  }
+}
+
+export class CoinsClient {
+  constructor(private readonly runtime: ClientRuntime) {}
+
+  async getUserPrivateData(
+    userId = requireUserId(this.runtime.http),
+  ): Promise<FirestoreDocument<UserPrivateData>> {
+    const documentPath = buildFirestoreDocumentPath("user-privates", userId);
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: "GET",
+      url: buildFirestoreDocumentUrl(
+        this.runtime.options.firebase.firestoreBaseUrl,
+        this.runtime.options.firebase.projectId,
+        documentPath,
+      ),
+      auth: "none",
+      headers: {
+        authorization: `Bearer ${requireFirebaseBearerToken(this.runtime.http)}`,
+      },
+      query: {
+        key: this.runtime.options.firebase.apiKey,
+      },
+    });
+
+    return parseFirestoreDocument<UserPrivateData>(payload);
+  }
+
+  async getBalance(
+    userId = requireUserId(this.runtime.http),
+  ): Promise<CoinBalanceSnapshot> {
+    const document = await this.getUserPrivateData(userId);
+    const coinBalances = normalizeCoinBalances(document.fields.coinBalances);
+    const paidCoins =
+      pickNamedCoinBalance(coinBalances, "paid") ??
+      toFiniteNumber((document.fields as Record<string, unknown>).paidCoins);
+    const freeCoins =
+      pickNamedCoinBalance(coinBalances, "free") ??
+      toFiniteNumber((document.fields as Record<string, unknown>).freeCoins);
+
+    return {
+      userId,
+      documentPath: document.name,
+      paidCoins,
+      freeCoins,
+      coinBalances,
+      userPrivateData: document.fields,
+      rawDocument: document,
+    };
   }
 }
 
@@ -1427,6 +1495,8 @@ function resolveClientOptions(options: PopopoClientOptions): ResolvedClientOptio
         options.firebase?.authBaseUrl ?? DEFAULT_FIREBASE_CONFIG.authBaseUrl,
       authDomain:
         options.firebase?.authDomain ?? DEFAULT_FIREBASE_CONFIG.authDomain,
+      firestoreBaseUrl:
+        options.firebase?.firestoreBaseUrl ?? DEFAULT_FIREBASE_CONFIG.firestoreBaseUrl,
       projectId:
         options.firebase?.projectId ?? DEFAULT_FIREBASE_CONFIG.projectId,
       secureTokenBaseUrl:
@@ -1453,6 +1523,24 @@ function resolveClientOptions(options: PopopoClientOptions): ResolvedClientOptio
 
 function buildFirebaseUrl(baseUrl: string, suffix: string): string {
   return buildAbsoluteUrl(baseUrl, `/${suffix}`);
+}
+
+function buildFirestoreDocumentUrl(
+  baseUrl: string,
+  projectId: string,
+  documentPath: string,
+): string {
+  return buildAbsoluteUrl(
+    baseUrl,
+    `/projects/${encodeURIComponent(projectId)}/databases/(default)/documents/${documentPath}`,
+  );
+}
+
+function buildFirestoreDocumentPath(
+  collectionId: string,
+  documentId: string,
+): string {
+  return `${encodeURIComponent(collectionId)}/${encodeURIComponent(documentId)}`;
 }
 
 function buildAbsoluteUrl(baseUrl: string, suffix: string): string {
@@ -1682,6 +1770,205 @@ function requireUserId(http: HttpClient): string {
   }
 
   return userId;
+}
+
+function requireFirebaseBearerToken(http: HttpClient): string {
+  const token = http.getSession().firebaseIdToken ?? http.getSession().bearerToken;
+
+  if (!token) {
+    throw new PopopoConfigurationError(
+      "No Firebase ID token is available. Sign in first or set `session.firebaseIdToken` explicitly.",
+    );
+  }
+
+  return token;
+}
+
+function parseFirestoreDocument<TFields = Record<string, unknown>>(
+  payload: Record<string, unknown>,
+): FirestoreDocument<TFields> {
+  const name = requiredString(payload, ["name"]);
+  const fields = decodeFirestoreFields(payload.fields) as TFields;
+
+  return {
+    name,
+    createTime: optionalString(payload.createTime),
+    updateTime: optionalString(payload.updateTime),
+    fields,
+    raw: payload,
+  };
+}
+
+function decodeFirestoreFields(fields: unknown): Record<string, unknown> {
+  if (!fields || typeof fields !== "object") {
+    return {};
+  }
+
+  const decoded: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(fields as Record<string, unknown>)) {
+    decoded[key] = decodeFirestoreValue(value);
+  }
+
+  return decoded;
+}
+
+function decodeFirestoreValue(value: unknown): unknown {
+  if (!value || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+
+  if ("nullValue" in record) {
+    return null;
+  }
+
+  if ("booleanValue" in record) {
+    return record.booleanValue;
+  }
+
+  if ("stringValue" in record) {
+    return record.stringValue;
+  }
+
+  if ("timestampValue" in record) {
+    return record.timestampValue;
+  }
+
+  if ("referenceValue" in record) {
+    return record.referenceValue;
+  }
+
+  if ("bytesValue" in record) {
+    return record.bytesValue;
+  }
+
+  if ("integerValue" in record) {
+    return toFirestoreNumber(record.integerValue);
+  }
+
+  if ("doubleValue" in record) {
+    return toFirestoreNumber(record.doubleValue);
+  }
+
+  if ("geoPointValue" in record && typeof record.geoPointValue === "object") {
+    return { ...(record.geoPointValue as Record<string, unknown>) };
+  }
+
+  if ("arrayValue" in record) {
+    const values = (record.arrayValue as Record<string, unknown>)?.values;
+
+    if (!Array.isArray(values)) {
+      return [];
+    }
+
+    return values.map((item) => decodeFirestoreValue(item));
+  }
+
+  if ("mapValue" in record) {
+    return decodeFirestoreFields((record.mapValue as Record<string, unknown>)?.fields);
+  }
+
+  return record;
+}
+
+function toFirestoreNumber(value: unknown): number | string | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value !== "string" || value.length === 0) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : value;
+}
+
+function normalizeCoinBalances(value: unknown): Record<string, number> {
+  const balances: Record<string, number> = {};
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const record = item as Record<string, unknown>;
+      const rawName =
+        record.scope ??
+        record.kind ??
+        record.type ??
+        record.name ??
+        record.label ??
+        record.id;
+      const amount =
+        toFiniteNumber(record.balance) ??
+        toFiniteNumber(record.amount) ??
+        toFiniteNumber(record.coin) ??
+        toFiniteNumber(record.coins) ??
+        toFiniteNumber(record.value);
+
+      if (typeof rawName === "string" && amount !== undefined) {
+        balances[rawName] = amount;
+      }
+    }
+
+    return balances;
+  }
+
+  if (!value || typeof value !== "object") {
+    return balances;
+  }
+
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    const amount =
+      toFiniteNumber(entry) ??
+      (entry && typeof entry === "object"
+        ? toFiniteNumber((entry as Record<string, unknown>).balance) ??
+          toFiniteNumber((entry as Record<string, unknown>).amount) ??
+          toFiniteNumber((entry as Record<string, unknown>).value)
+        : undefined);
+
+    if (amount !== undefined) {
+      balances[key] = amount;
+    }
+  }
+
+  return balances;
+}
+
+function pickNamedCoinBalance(
+  balances: Record<string, number>,
+  token: string,
+): number | undefined {
+  const lowered = token.toLowerCase();
+
+  for (const [key, value] of Object.entries(balances)) {
+    if (key.toLowerCase().includes(lowered)) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : undefined;
+  }
+
+  if (typeof value === "string" && value.length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  return undefined;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 function requireTsoFileApiBaseUrl(config: TsoClientConfig): string {
