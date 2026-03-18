@@ -27,6 +27,7 @@ import type {
   LivePowerSendRequest,
   LivePowerSendResult,
   LiveAudioStream,
+  LiveAudienceJoinResult,
   LiveEnterResult,
   LiveReceiveInfo,
   LiveStartRequest,
@@ -64,6 +65,13 @@ import type {
   NameplateNormalDisplayedMessage,
   NameplateSpecialDisplayedMessage,
   NotificationItem,
+  OwnedSkin,
+  OwnedSkinListOptions,
+  OwnedSkinListResult,
+  StoreSkin,
+  StoreSkinDistribution,
+  StoreSkinListOptions,
+  StoreSkinListResult,
   PersonalNotificationData,
   PersonalNotificationDeliveryContent,
   ReceiveLatestPresentResult,
@@ -94,6 +102,8 @@ import type {
   TsoRefreshTokenRequest,
   UserPrivateData,
   UserAnotherNameChangeRequest,
+  SkinChangeRequest,
+  SkinChangeResult,
   UserDisplayNameChangeRequest,
   UserIconSourceChangeRequest,
   UserProfile,
@@ -171,6 +181,7 @@ export class PopopoClient {
   readonly push: PushClient
   readonly calls: CallsClient
   readonly coins: CoinsClient
+  readonly skins: SkinsClient
   readonly invites: InvitesClient
   readonly notifications: NotificationsClient
   readonly scenes: ScenesClient
@@ -209,6 +220,7 @@ export class PopopoClient {
     this.push = new PushClient(this.runtime)
     this.calls = new CallsClient(this.runtime)
     this.coins = new CoinsClient(this.runtime)
+    this.skins = new SkinsClient(this.runtime)
     this.invites = new InvitesClient(this.runtime)
     this.notifications = new NotificationsClient(this.runtime)
     this.scenes = new ScenesClient(this.runtime)
@@ -1339,6 +1351,27 @@ export class LivesClient {
     }
   }
 
+  async joinAudience(
+    input: {
+      spaceKey: string
+      request?: HomeDisplaySpacesRequest
+      query?: RequestQuery
+    },
+  ): Promise<LiveAudienceJoinResult> {
+    const enterResult = await this.enter(input.spaceKey, input.request, input.query)
+    const receiveInfo = await this.getReceiveInfo({
+      spaceKey: enterResult.spaceKey,
+      liveId: enterResult.liveId,
+      request: input.request,
+      query: input.query,
+    })
+
+    return {
+      ...enterResult,
+      receiveInfo,
+    }
+  }
+
   async postComment<TResponse = { id?: string; [key: string]: unknown }>(input: {
     spaceKey?: string
     liveId?: string
@@ -2035,6 +2068,115 @@ export class CoinsClient {
   }
 }
 
+export class SkinsClient {
+  constructor(private readonly runtime: ClientRuntime) {}
+
+  async listOwned(input: OwnedSkinListOptions = {}): Promise<OwnedSkinListResult> {
+    const userId = input.userId ?? requireUserId(this.runtime.http)
+    const firebaseBearerToken = await ensureFirebaseBearerToken(this.runtime)
+    const payload = await this.runtime.http.request<Record<string, unknown>>({
+      method: 'GET',
+      url: buildFirestoreCollectionUrl(
+        this.runtime.options.firebase.firestoreBaseUrl,
+        this.runtime.options.firebase.projectId,
+        buildFirestoreCollectionPath('user-privates', userId, 'user-inventories'),
+      ),
+      auth: 'none',
+      headers: {
+        authorization: `Bearer ${firebaseBearerToken}`,
+      },
+      query: compactObject({
+        key: this.runtime.options.firebase.apiKey,
+        pageSize: getSkinPageSize(input),
+        orderBy: input.orderBy ?? 'created_at desc',
+        pageToken: input.pageToken,
+      }) as RequestQuery,
+    })
+
+    return parseOwnedSkinList(payload)
+  }
+
+  async listStore(input: StoreSkinListOptions = {}): Promise<StoreSkinListResult> {
+    const firebaseBearerToken = await ensureFirebaseBearerToken(this.runtime)
+    const itemsResult = await fetchAllFirestoreCollectionDocuments(this.runtime, firebaseBearerToken, {
+      collectionPath: buildFirestoreCollectionPath('items'),
+      orderBy: input.orderBy ?? 'default_price asc',
+      pageSize: getStoreSkinPageSize(input),
+    })
+
+    const candidates = itemsResult.documents
+      .map((document) => toStoreSkin(document))
+      .filter((skin) => skin.kind === 'look')
+      .filter((skin) => input.includeNonPublic || skin.status === 'public')
+
+    if (input.includeInactive) {
+      return {
+        skins: candidates.slice(0, getStoreSkinLimit(input)),
+        raw: {
+          itemPages: itemsResult.rawPages,
+        },
+      }
+    }
+
+    const now = Math.floor(Date.now() / 1000)
+    const distributionRawPages: Record<string, Record<string, unknown>[]> = {}
+    const hydrated = await Promise.all(
+      candidates.map(async (skin) => {
+        const distributionsResult = await fetchAllFirestoreCollectionDocuments(
+          this.runtime,
+          firebaseBearerToken,
+          {
+            collectionPath: buildFirestoreCollectionPath('items', skin.itemId, 'item-distributions'),
+            orderBy: 'start_at desc',
+            pageSize: 100,
+          },
+        )
+        const distributions = distributionsResult.documents.map((document) =>
+          toStoreSkinDistribution(document),
+        )
+        const activeDistribution = distributions.find((distribution) =>
+          isStoreSkinDistributionActive(distribution, now),
+        )
+
+        distributionRawPages[skin.itemId] = distributionsResult.rawPages
+
+        return {
+          ...skin,
+          isOnSale: Boolean(activeDistribution),
+          activeDistribution,
+          distributions,
+        }
+      }),
+    )
+
+    return {
+      skins: hydrated.filter((skin) => skin.isOnSale).slice(0, getStoreSkinLimit(input)),
+      raw: {
+        itemPages: itemsResult.rawPages,
+        distributionPages: distributionRawPages,
+      },
+    }
+  }
+
+  change<TResponse = SkinChangeResult>(request: SkinChangeRequest): Promise<TResponse> {
+    const { inventoryId, kind = 'inventory', ...rest } = request
+    const endpointPath = this.runtime.endpoints.users.updateLook.startsWith('/api/')
+      ? this.runtime.endpoints.users.updateLook
+      : `/api/v2${this.runtime.endpoints.users.updateLook}`
+
+    return this.runtime.http.request<TResponse>({
+      method: 'POST',
+      url: buildAbsoluteUrl(this.runtime.options.apiBaseUrl, endpointPath),
+      auth: 'bearer',
+      body: compactObject({
+        ...rest,
+        kind,
+        id: inventoryId,
+      }),
+    })
+  }
+}
+
 export class PushClient {
   constructor(private readonly runtime: ClientRuntime) {}
 
@@ -2551,6 +2693,59 @@ function buildFirestoreCollectionPath(...segments: string[]): string {
   return segments.map((segment) => encodeURIComponent(segment)).join('/')
 }
 
+async function fetchAllFirestoreCollectionDocuments<TFields = Record<string, unknown>>(
+  runtime: ClientRuntime,
+  firebaseBearerToken: string,
+  input: {
+    collectionPath: string
+    orderBy?: string
+    pageSize?: number
+  },
+): Promise<{
+  documents: FirestoreDocument<TFields>[]
+  rawPages: Record<string, unknown>[]
+}> {
+  const documents: FirestoreDocument<TFields>[] = []
+  const rawPages: Record<string, unknown>[] = []
+  let pageToken: string | undefined
+
+  while (true) {
+    const payload = await runtime.http.request<Record<string, unknown>>({
+      method: 'GET',
+      url: buildFirestoreCollectionUrl(
+        runtime.options.firebase.firestoreBaseUrl,
+        runtime.options.firebase.projectId,
+        input.collectionPath,
+      ),
+      auth: 'none',
+      headers: {
+        authorization: `Bearer ${firebaseBearerToken}`,
+      },
+      query: compactObject({
+        key: runtime.options.firebase.apiKey,
+        pageSize: input.pageSize ?? 100,
+        orderBy: input.orderBy,
+        pageToken,
+      }) as RequestQuery,
+    })
+
+    const parsed = parseFirestoreDocumentList<TFields>(payload)
+    documents.push(...parsed.documents)
+    rawPages.push(payload)
+
+    if (!parsed.nextPageToken) {
+      break
+    }
+
+    pageToken = parsed.nextPageToken
+  }
+
+  return {
+    documents,
+    rawPages,
+  }
+}
+
 function buildAbsoluteUrl(baseUrl: string, suffix: string): string {
   const url = new URL(ensureTrailingSlash(baseUrl))
   const normalizedBasePath = url.pathname.replace(/\/+$/, '')
@@ -2930,6 +3125,16 @@ function parseSpaceMessageList(payload: Record<string, unknown>): SpaceMessageLi
   }
 }
 
+function parseOwnedSkinList(payload: Record<string, unknown>): OwnedSkinListResult {
+  const parsed = parseFirestoreDocumentList(payload)
+
+  return {
+    skins: parsed.documents.map((document) => toOwnedSkin(document)),
+    nextPageToken: parsed.nextPageToken,
+    raw: parsed.raw,
+  }
+}
+
 function toLiveComment(document: FirestoreDocument<Record<string, unknown>>): LiveComment {
   const record = document.fields
 
@@ -3074,6 +3279,71 @@ function toPowerItem(document: FirestoreDocument<Record<string, unknown>>): Powe
   }
 }
 
+function toOwnedSkin(document: FirestoreDocument<Record<string, unknown>>): OwnedSkin {
+  const record = document.fields
+  const item = asObjectRecord(record.item)
+  const inventoryId = optionalString(record.id) ?? lastPathSegment(document.name)
+
+  return {
+    id: inventoryId,
+    inventoryId,
+    documentPath: document.name,
+    kind: 'inventory',
+    itemId: optionalString(item?.id),
+    itemName: optionalString(item?.name),
+    description: optionalString(item?.description),
+    createdAt: toFiniteNumber(record.created_at),
+    updatedAt: toFiniteNumber(record.updated_at),
+    reason: optionalString(record.reason) as OwnedSkin['reason'],
+    item,
+    raw: document,
+    ...record,
+  }
+}
+
+function toStoreSkin(document: FirestoreDocument<Record<string, unknown>>): StoreSkin {
+  const record = document.fields
+  const itemId = optionalString(record.id) ?? lastPathSegment(document.name)
+
+  return {
+    id: itemId,
+    itemId,
+    documentPath: document.name,
+    kind: optionalString(record.kind),
+    name: optionalString(record.name),
+    description: optionalString(record.description),
+    status: optionalString(record.status),
+    defaultPrice: toFiniteNumber(record.default_price),
+    media: asObjectRecord(record.media),
+    tags: Array.isArray(record.tags) ? record.tags : undefined,
+    sales: Array.isArray(record.sales) ? record.sales : undefined,
+    saleIds: toStringArray(record.sale_ids),
+    relatedItemIds: toStringArray(record.related_item_ids),
+    raw: document,
+    ...record,
+  }
+}
+
+function toStoreSkinDistribution(
+  document: FirestoreDocument<Record<string, unknown>>,
+): StoreSkinDistribution {
+  const record = document.fields
+  const salePeriodState = asObjectRecord(record.sale_period_state)
+  const distributionId = optionalString(record.id) ?? lastPathSegment(document.name)
+
+  return {
+    id: distributionId,
+    documentPath: document.name,
+    status: optionalString(record.status),
+    startAt: toFiniteNumber(record.start_at),
+    endAt: toFiniteNumber(record.end_at),
+    active: optionalBoolean(salePeriodState?.active),
+    salePeriodState,
+    raw: document,
+    ...record,
+  }
+}
+
 function looksLikePowerAlias(value: string): boolean {
   return /^power_\d+$/i.test(value) || /^\d+$/.test(value)
 }
@@ -3211,6 +3481,47 @@ function getNotificationOrderBy(query: RequestQuery | undefined, fallback: strin
   return (
     getRequestQueryString(query, 'orderBy') ?? getRequestQueryString(query, 'order-by') ?? fallback
   )
+}
+
+function getSkinPageSize(input: OwnedSkinListOptions): number {
+  return typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0
+    ? input.limit
+    : 100
+}
+
+function getStoreSkinLimit(input: StoreSkinListOptions): number {
+  return typeof input.limit === 'number' && Number.isFinite(input.limit) && input.limit > 0
+    ? input.limit
+    : Number.MAX_SAFE_INTEGER
+}
+
+function getStoreSkinPageSize(input: StoreSkinListOptions): number {
+  const limit = getStoreSkinLimit(input)
+
+  if (!Number.isFinite(limit)) {
+    return 100
+  }
+
+  return Math.max(1, Math.min(100, limit))
+}
+
+function isStoreSkinDistributionActive(
+  distribution: StoreSkinDistribution,
+  now: number,
+): boolean {
+  if (distribution.status !== 'public' || distribution.active !== true) {
+    return false
+  }
+
+  if (typeof distribution.startAt === 'number' && distribution.startAt > now) {
+    return false
+  }
+
+  if (typeof distribution.endAt === 'number' && distribution.endAt < now) {
+    return false
+  }
+
+  return true
 }
 
 function getRequestQueryString(query: RequestQuery | undefined, key: string): string | undefined {
@@ -3537,6 +3848,15 @@ function pickNamedCoinBalance(balances: Record<string, number>, token: string): 
   }
 
   return undefined
+}
+
+function toStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined
+  }
+
+  const items = value.filter((entry): entry is string => typeof entry === 'string')
+  return items.length > 0 ? items : undefined
 }
 
 function toFiniteNumber(value: unknown): number | undefined {

@@ -35,5 +35,9 @@
   "optionalDependencies": {
     "playwright-core": "^1.53.0",
     "trtc-sdk-v5": "^5.16.0"
+  },
+  "private": true,
+  "dependencies": {
+    "p-limit": "^7.3.0"
   }
 }

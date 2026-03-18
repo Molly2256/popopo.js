@@ -129,6 +129,9 @@ async function dispatchCommand(
     case 'calls':
     case 'call':
       return runCallsSubcommand(second, client, options)
+    case 'skins':
+    case 'skin':
+      return runSkinsSubcommand(second, client, options)
     case 'lives':
       return runLivesSubcommand(second, client, options, context.globalOptions)
     case 'spaces':
@@ -410,6 +413,13 @@ async function runLivesSubcommand(
         body: buildLiveStartRequest(options),
         query: parseQueryOptions(options),
       })
+    case 'audience-enter':
+    case 'join-audience':
+      return client.lives.joinAudience({
+        spaceKey: requireOption(options, 'space-key'),
+        request: buildHomeDisplaySpacesRequest(options),
+        query: parseQueryOptions(options),
+      })
     case 'enter':
       return client.lives.enter(
         requireOption(options, 'space-key'),
@@ -518,6 +528,25 @@ async function runCallsSubcommand(
       )
     default:
       throw new Error('Unknown calls subcommand.')
+  }
+}
+
+async function runSkinsSubcommand(
+  command: string | undefined,
+  client: PopopoClient,
+  options: Map<string, string[]>,
+): Promise<unknown> {
+  switch (command) {
+    case 'list':
+    case undefined:
+      return client.skins.listOwned(buildOwnedSkinListOptions(options))
+    case 'list-store':
+    case 'store-list':
+      return client.skins.listStore(buildStoreSkinListOptions(options))
+    case 'change':
+      return client.skins.change(buildSkinChangeRequest(options))
+    default:
+      throw new Error('Unknown skins subcommand.')
   }
 }
 
@@ -809,12 +838,12 @@ async function runAnonymousSignIn(
   options: Map<string, string[]>,
 ): Promise<unknown> {
   const session = await client.auth.signInAnonymously()
-
   if (hasFlag(options, 'firebase-only')) {
     return session
   }
 
   const registration = await client.accounts.register()
+
   return {
     session,
     registration,
@@ -1255,6 +1284,78 @@ function buildCallPushCreateRequest(options: Map<string, string[]>): CallPushCre
   }
 }
 
+function buildOwnedSkinListOptions(options: Map<string, string[]>): {
+  userId?: string
+  limit?: number
+  orderBy?: string
+  pageToken?: string
+} {
+  return compactObject({
+    userId: getSingleOption(options, 'user-id'),
+    limit: parseOptionalNumberOption(options, 'limit'),
+    orderBy: getSingleOption(options, 'order-by'),
+    pageToken: getSingleOption(options, 'page-token'),
+  })
+}
+
+function buildStoreSkinListOptions(options: Map<string, string[]>): {
+  limit?: number
+  orderBy?: string
+  includeInactive?: boolean
+  includeNonPublic?: boolean
+} {
+  return compactObject({
+    limit: parseOptionalNumberOption(options, 'limit'),
+    orderBy: getSingleOption(options, 'order-by'),
+    includeInactive: hasFlag(options, 'include-inactive') ? true : undefined,
+    includeNonPublic: hasFlag(options, 'include-non-public') ? true : undefined,
+  })
+}
+
+function buildSkinChangeRequest(options: Map<string, string[]>): {
+  inventoryId: string
+  kind?: string
+  [key: string]: unknown
+} {
+  const rawBody = getSingleOption(options, 'body-json')
+
+  if (rawBody) {
+    const parsed = parseJsonOption<Record<string, unknown>>(rawBody, '--body-json')
+    const inventoryId =
+      typeof parsed.inventoryId === 'string'
+        ? parsed.inventoryId
+        : typeof parsed.inventory_id === 'string'
+          ? parsed.inventory_id
+          : typeof parsed.id === 'string'
+            ? parsed.id
+            : undefined
+
+    if (!inventoryId) {
+      throw new Error(
+        'Skin change --body-json requires one of `inventoryId`, `inventory_id`, or `id`.',
+      )
+    }
+
+    const { inventoryId: _, inventory_id: __, id: ___, ...rest } = parsed
+
+    return {
+      ...rest,
+      inventoryId,
+    }
+  }
+
+  return compactObject({
+    inventoryId:
+      requireOption(options, 'inventory-id', {
+        fallback: getSingleOption(options, 'skin-id'),
+      }),
+    kind: getSingleOption(options, 'kind'),
+  }) as {
+    inventoryId: string
+    kind?: string
+  }
+}
+
 function createClient(
   globalOptions: GlobalOptions,
   resources: ResourceStrings,
@@ -1670,7 +1771,7 @@ function printHelp(): void {
       '  popopo <command> [options]',
       '',
       'Core commands:',
-      '  popopo anonymous [--firebase-only]',
+      '  popopo anonymous [--firebase-only] [--session-file <path>]',
       '  popopo signup --email <email> --password <password> [--display-name <name>] [--alias <handle>]',
       '  popopo signin --email <email> --password <password>',
       '  popopo auth sign-in-with-credential --sign-in-method <method> [credential fields]',
@@ -1704,6 +1805,8 @@ function printHelp(): void {
       '  popopo lives get --space-key <space-key> [--kind <value>] [--category <value>] [--query key=value]',
       '  popopo lives list --space-key <space-key> [--kind <value>] [--category <value>] [--query key=value]',
       '  popopo lives start --space-key <space-key> --genre-id <genre-id> [--tag <tag>] [--can-enter <true|false>]',
+      '  popopo lives audience-enter --space-key <space-key>',
+      '  popopo lives join-audience --space-key <space-key>',
       '  popopo lives enter --space-key <space-key>',
       '  popopo lives receive-info --space-key <space-key> [--live-id <live-id>]',
       '  popopo lives stream-audio --space-key <space-key> [--live-id <live-id>] --output <path|-> [--max-bytes <n>]',
@@ -1729,6 +1832,9 @@ function printHelp(): void {
       '  popopo spaces watch --space-key <space-key> [--limit <n>] [--interval-ms <ms>] [--timeout-ms <ms>]',
       '  popopo push upsert-device --device-id <id> [--device-name <name>] [--system <dummy|android|ios>] [--app <name>]',
       '  popopo calls create-push --kind <user-call|space-friends-call|live-follower-call> --space-key <space-key> [--user-id <id>] [--live-id <id>]',
+      '  popopo skins list [--user-id <id>] [--limit <n>] [--order-by <field dir>] [--page-token <token>]',
+      '  popopo skins list-store [--limit <n>] [--order-by <field dir>] [--include-inactive] [--include-non-public]',
+      '  popopo skins change --inventory-id <id>',
       '  popopo invites list [--query key=value]',
       '  popopo invites get --code <invite-code>',
       '  popopo invites accept --code <invite-code>',
@@ -1796,6 +1902,10 @@ function printHelp(): void {
       '  --app <value>',
       '  --space-key <value>',
       '  --live-id <value>',
+      '  --inventory-id <value>',
+      '  --skin-id <value>        Alias of --inventory-id for `popopo skins change`',
+      '  --include-inactive       Include skins that are not currently on sale',
+      '  --include-non-public     Include non-public item docs in `popopo skins list-store`',
       '  --power-id <value>       Live power id or name from `popopo lives powers`',
       '  --selection-id <value>   Live selection id or title from `popopo lives selections`',
       '  --sequence-id <value>    Live sequence id or kind from `popopo lives selection-sequences`',

@@ -5,6 +5,7 @@ export interface PopopoEndpointSet {
     collection: string
     me: string
     byId: (userId: string) => string
+    updateLook: string
     updateDisplayName: string
     updateAnotherName: string
     updateIconSource: string
@@ -46,6 +47,7 @@ export function createDefaultEndpoints(apiBasePath = ''): PopopoEndpointSet {
       collection: buildPath(basePath, 'users'),
       me: buildPath(basePath, 'users/me'),
       byId: (userId) => buildPath(basePath, `users/${encodeURIComponent(userId)}`),
+      updateLook: buildPath(basePath, 'users/me/profile/look'),
       updateDisplayName: buildPath(basePath, 'ipc/user/change-display-name'),
       updateAnotherName: buildPath(basePath, 'ipc/user/change-another-name'),
       updateIconSource: buildPath(basePath, 'ipc/user/change-icon-source'),
@@ -95,6 +97,7 @@ export function mergeEndpoints(
       collection: overrides.users?.collection ?? defaults.users.collection,
       me: overrides.users?.me ?? defaults.users.me,
       byId: overrides.users?.byId ?? defaults.users.byId,
+      updateLook: overrides.users?.updateLook ?? defaults.users.updateLook,
       updateDisplayName: overrides.users?.updateDisplayName ?? defaults.users.updateDisplayName,
       updateAnotherName: overrides.users?.updateAnotherName ?? defaults.users.updateAnotherName,
       updateIconSource: overrides.users?.updateIconSource ?? defaults.users.updateIconSource,

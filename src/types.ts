@@ -172,6 +172,10 @@ export interface LiveEnterResult {
   live: LiveListItem
 }
 
+export interface LiveAudienceJoinResult extends LiveEnterResult {
+  receiveInfo: LiveReceiveInfo
+}
+
 export interface TencentTlsCompactToken {
   'TLS.identifier'?: string
   'TLS.sdkappid'?: string
@@ -528,6 +532,100 @@ export interface CoinBalanceSnapshot {
   coinBalances: Record<string, number>
   userPrivateData: UserPrivateData
   rawDocument: FirestoreDocument<UserPrivateData>
+}
+
+export type OwnedSkinReason =
+  | 'purchase'
+  | 'present'
+  | 'initial-look'
+  | 'subscription'
+  | (string & {})
+
+export interface OwnedSkin {
+  id: string
+  inventoryId: string
+  documentPath: string
+  kind: 'inventory'
+  itemId?: string
+  itemName?: string
+  description?: string
+  createdAt?: number
+  updatedAt?: number
+  reason?: OwnedSkinReason
+  item?: Record<string, unknown>
+  raw: FirestoreDocument<Record<string, unknown>>
+  [key: string]: unknown
+}
+
+export interface OwnedSkinListOptions {
+  userId?: string
+  limit?: number
+  orderBy?: string
+  pageToken?: string
+}
+
+export interface OwnedSkinListResult {
+  skins: OwnedSkin[]
+  nextPageToken?: string
+  raw: Record<string, unknown>
+}
+
+export interface StoreSkinDistribution {
+  id: string
+  documentPath: string
+  status?: string
+  startAt?: number
+  endAt?: number
+  active?: boolean
+  salePeriodState?: Record<string, unknown>
+  raw: FirestoreDocument<Record<string, unknown>>
+  [key: string]: unknown
+}
+
+export interface StoreSkin {
+  id: string
+  itemId: string
+  documentPath: string
+  kind?: string
+  name?: string
+  description?: string
+  status?: string
+  defaultPrice?: number
+  media?: Record<string, unknown>
+  tags?: unknown[]
+  sales?: unknown[]
+  saleIds?: string[]
+  relatedItemIds?: string[]
+  isOnSale?: boolean
+  activeDistribution?: StoreSkinDistribution
+  distributions?: StoreSkinDistribution[]
+  raw: FirestoreDocument<Record<string, unknown>>
+  [key: string]: unknown
+}
+
+export interface StoreSkinListOptions {
+  limit?: number
+  orderBy?: string
+  includeInactive?: boolean
+  includeNonPublic?: boolean
+}
+
+export interface StoreSkinListResult {
+  skins: StoreSkin[]
+  raw: Record<string, unknown>
+}
+
+export type SkinChangeKind = 'inventory' | (string & {})
+
+export interface SkinChangeRequest {
+  inventoryId: string
+  kind?: SkinChangeKind
+  [key: string]: unknown
+}
+
+export interface SkinChangeResult {
+  result?: boolean
+  [key: string]: unknown
 }
 
 export interface Invite {
