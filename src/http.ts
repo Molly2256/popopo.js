@@ -33,6 +33,11 @@ export interface HttpClientOptions {
   session: AuthState
   fetchImplementation?: FetchLike
   defaultHeaders?: HeadersInit
+  prepareAuth?: (input: {
+    auth: RequestAuthMode
+    requestUrl: string
+    session: Readonly<AuthState>
+  }) => Promise<void> | void
 }
 
 const REQUESTED_WITH_HEADER_NAME = 'x-requested-with'
@@ -43,12 +48,14 @@ export class HttpClient {
   private readonly fetchImplementation: FetchLike
   private readonly defaultHeaders: Headers
   private readonly session: AuthState
+  private readonly prepareAuth?: HttpClientOptions['prepareAuth']
 
   constructor(options: HttpClientOptions) {
     this.baseUrl = options.baseUrl
     this.fetchImplementation = options.fetchImplementation ?? fetch
     this.defaultHeaders = new Headers(options.defaultHeaders)
     this.session = options.session
+    this.prepareAuth = options.prepareAuth
   }
 
   getSession(): Readonly<AuthState> {
@@ -78,9 +85,19 @@ export class HttpClient {
       url: options.url,
       query: options.query,
     })
+    const auth = options.auth ?? 'session'
+
+    if (this.prepareAuth) {
+      await this.prepareAuth({
+        auth,
+        requestUrl: url,
+        session: this.session,
+      })
+    }
+
     const headers = this.buildHeaders(
       options.headers,
-      options.auth ?? 'session',
+      auth,
       options.includeAppCheck ?? true,
       url,
     )

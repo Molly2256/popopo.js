@@ -301,6 +301,72 @@ describe('SkinsClient', () => {
     expect(result).toEqual({ result: true })
   })
 
+  test('refreshes an expired token before bearer-auth skin changes', async () => {
+    const calls: string[] = []
+    const seenAuthorizations: string[] = []
+    const expiredToken = ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', 'eyJleHAiOjF9', 'sig'].join('.')
+    const freshToken = [
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+      'eyJleHAiOjk5OTk5OTk5OTksInVzZXJfaWQiOiJ1c2VyLWJlYXJlci1yZWZyZXNoZWQifQ',
+      'sig',
+    ].join('.')
+
+    const client = new PopopoClient({
+      fetch: async (input, init) => {
+        const url = String(input)
+        calls.push(url)
+        seenAuthorizations.push(new Headers(init?.headers).get('authorization') ?? '')
+
+        if (url.startsWith('https://securetoken.googleapis.com/v1/token')) {
+          return new Response(
+            JSON.stringify({
+              access_token: 'access-token',
+              id_token: freshToken,
+              refresh_token: 'refresh-2',
+              user_id: 'user-bearer-refreshed',
+              expires_in: '3600',
+              token_type: 'Bearer',
+            }),
+            {
+              status: 200,
+              headers: {
+                'content-type': 'application/json',
+              },
+            },
+          )
+        }
+
+        return new Response(JSON.stringify({ result: true }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        })
+      },
+      session: {
+        bearerToken: expiredToken,
+        refreshToken: 'refresh-1',
+      },
+    })
+
+    const result = await client.skins.change({
+      inventoryId: 'inventory-001',
+    })
+
+    expect(calls).toEqual([
+      'https://securetoken.googleapis.com/v1/token?key=AIzaSyAmY4T-_U3IGS_TvD5ERQsr2HQsHUmaapc',
+      'https://api.popopo.com/api/v2/users/me/profile/look',
+    ])
+    expect(seenAuthorizations).toEqual(['', `Bearer ${freshToken}`])
+    expect(client.getSession()).toMatchObject({
+      firebaseIdToken: freshToken,
+      bearerToken: freshToken,
+      refreshToken: 'refresh-2',
+      userId: 'user-bearer-refreshed',
+    })
+    expect(result).toEqual({ result: true })
+  })
+
   test('reads item_id from owned skin inventory documents', async () => {
     const client = new PopopoClient({
       fetch: async () =>
@@ -3049,6 +3115,73 @@ describe('SpacesClient', () => {
 
     expect(seenUrl).toBe('https://api.popopo.com/api/v2/spaces')
     expect(seenBody).toBe(JSON.stringify({ name: 'test-space', backgroundId: 'bg-1' }))
+    expect(result).toEqual({ spaceKey: 'space-123' })
+  })
+
+  test('refreshes an expired token before session-auth backend requests', async () => {
+    const calls: string[] = []
+    const seenAuthorizations: string[] = []
+    const expiredToken = ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', 'eyJleHAiOjF9', 'sig'].join('.')
+    const freshToken = [
+      'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9',
+      'eyJleHAiOjk5OTk5OTk5OTksInVzZXJfaWQiOiJ1c2VyLXNlc3Npb24tcmVmcmVzaGVkIn0',
+      'sig',
+    ].join('.')
+
+    const client = new PopopoClient({
+      fetch: async (input, init) => {
+        const url = String(input)
+        calls.push(url)
+        seenAuthorizations.push(new Headers(init?.headers).get('authorization') ?? '')
+
+        if (url.startsWith('https://securetoken.googleapis.com/v1/token')) {
+          return new Response(
+            JSON.stringify({
+              access_token: 'access-token',
+              id_token: freshToken,
+              refresh_token: 'refresh-2',
+              user_id: 'user-session-refreshed',
+              expires_in: '3600',
+              token_type: 'Bearer',
+            }),
+            {
+              status: 200,
+              headers: {
+                'content-type': 'application/json',
+              },
+            },
+          )
+        }
+
+        return new Response(JSON.stringify({ spaceKey: 'space-123' }), {
+          status: 200,
+          headers: {
+            'content-type': 'application/json',
+          },
+        })
+      },
+      session: {
+        bearerToken: expiredToken,
+        refreshToken: 'refresh-1',
+      },
+    })
+
+    const result = await client.spaces.create({
+      name: 'test-space',
+      backgroundId: 'bg-1',
+    })
+
+    expect(calls).toEqual([
+      'https://securetoken.googleapis.com/v1/token?key=AIzaSyAmY4T-_U3IGS_TvD5ERQsr2HQsHUmaapc',
+      'https://api.popopo.com/api/v2/spaces',
+    ])
+    expect(seenAuthorizations).toEqual(['', `Bearer ${freshToken}`])
+    expect(client.getSession()).toMatchObject({
+      firebaseIdToken: freshToken,
+      bearerToken: freshToken,
+      refreshToken: 'refresh-2',
+      userId: 'user-session-refreshed',
+    })
     expect(result).toEqual({ spaceKey: 'space-123' })
   })
 

@@ -103,6 +103,8 @@ async function dispatchCommand(
       return runSignUp(client, options, context.globalOptions)
     case 'signin':
       return runSignIn(client, options)
+    case 'refresh':
+      return runAuthRefresh(client, options)
     case 'verify-phone-number':
       return client.auth.verifyPhoneNumber(buildVerifyPhoneNumberRequest(options))
     case 'signout':
@@ -162,6 +164,8 @@ async function runAuthSubcommand(
       return runSignUp(client, options, globalOptions)
     case 'signin':
       return runSignIn(client, options)
+    case 'refresh':
+      return runAuthRefresh(client, options)
     case 'sign-in-with-credential':
       return client.auth.signInWithCredential(buildFlutterCredentialRequest(options))
     case 'lookup':
@@ -225,6 +229,22 @@ async function runAuthPhoneSubcommand(
   }
 
   throw new Error('Unknown auth phone subcommand.')
+}
+
+async function runAuthRefresh(
+  client: PopopoClient,
+  options: Map<string, string[]>,
+): Promise<unknown> {
+  const persist = !hasFlag(options, 'no-persist')
+  const snapshot = persist ? undefined : { ...client.getSession() }
+  const result = await client.auth.refreshFirebaseIdToken(getSingleOption(options, 'refresh-token'))
+
+  if (snapshot) {
+    client.clearSession()
+    client.setSession(snapshot)
+  }
+
+  return result
 }
 
 async function runUserSubcommand(
@@ -1833,7 +1853,9 @@ function printHelp(): void {
       '  popopo anonymous [--firebase-only] [--session-file <path>]',
       '  popopo signup --email <email> --password <password> [--display-name <name>] [--alias <handle>]',
       '  popopo signin --email <email> --password <password>',
+      '  popopo refresh [--refresh-token <token>]',
       '  popopo auth sign-in-with-credential --sign-in-method <method> [credential fields]',
+      '  popopo auth refresh [--refresh-token <token>]',
       '  popopo signout',
       '  popopo lookup [--id-token <token>]',
       '  popopo auth verify-phone-number --phone-number <E164> [--timeout-ms <ms>]',
@@ -1930,6 +1952,7 @@ function printHelp(): void {
       '  --secret <value>',
       '  --id-token <jwt>',
       '  --access-token <token>',
+      '  --refresh-token <token>',
       '  --raw-nonce <value>',
       '  --verification-id <value>',
       '  --verification-code <value>',

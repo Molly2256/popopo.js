@@ -1,6 +1,6 @@
 {
   "name": "popopo.js",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "main": "./dist/cli.mjs",
   "bin": {
     "popopo": "./dist/cli.mjs"
@@ -36,7 +36,6 @@
     "playwright-core": "^1.53.0",
     "trtc-sdk-v5": "^5.16.0"
   },
-  "private": true,
   "dependencies": {
     "p-limit": "^7.3.0"
   }

@@ -1,6 +1,6 @@
 import { createDefaultEndpoints, mergeEndpoints, type PopopoEndpointSet } from './endpoints.ts'
 import { PopopoApiError, PopopoConfigurationError } from './errors.ts'
-import { HttpClient, type FetchLike, type RequestQuery } from './http.ts'
+import { HttpClient, type FetchLike, type RequestAuthMode, type RequestQuery } from './http.ts'
 import { inflateSync } from 'node:zlib'
 import type {
   AccountRegisterResult,
@@ -234,11 +234,16 @@ export class PopopoClient {
       createDefaultEndpoints(resolved.apiBasePath),
       options.endpoints,
     )
-    const http = new HttpClient({
+    let http!: HttpClient
+
+    http = new HttpClient({
       baseUrl: resolved.baseUrl,
       session,
       fetchImplementation: options.fetch,
       defaultHeaders: options.headers,
+      prepareAuth: async ({ auth }) => {
+        await ensureSessionAuthToken(http, resolved, auth)
+      },
     })
 
     this.runtime = {
@@ -908,28 +913,7 @@ export class FirebaseAuthClient {
   async refreshFirebaseIdToken(
     refreshToken = this.runtime.http.getSession().refreshToken,
   ): Promise<FirebaseTokenRefreshResponse> {
-    if (!refreshToken) {
-      throw new PopopoConfigurationError('No Firebase refresh token is available.')
-    }
-
-    const payload = await this.runtime.http.request<Record<string, unknown>>({
-      method: 'POST',
-      url: buildFirebaseUrl(this.runtime.options.firebase.secureTokenBaseUrl, 'token'),
-      auth: 'none',
-      query: {
-        key: this.runtime.options.firebase.apiKey,
-      },
-      headers: {
-        'content-type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'refresh_token',
-        refresh_token: refreshToken,
-      }),
-    })
-    const refreshed = toFirebaseRefreshResponse(payload)
-    applyFirebaseRefresh(this.runtime.http, refreshed)
-    return refreshed
+    return refreshFirebaseIdToken(this.runtime.http, this.runtime.options, refreshToken)
   }
 
   async lookup(
@@ -3399,23 +3383,71 @@ function requireUserId(http: HttpClient): string {
 }
 
 async function ensureFirebaseBearerToken(runtime: ClientRuntime): Promise<string> {
-  const session = runtime.http.getSession()
-  const token = session.firebaseIdToken ?? session.bearerToken
+  const token = await ensureSessionAuthToken(runtime.http, runtime.options, 'firebase')
 
-  if (!token && !session.refreshToken) {
+  if (!token) {
     throw new PopopoConfigurationError(
       'No Firebase ID token is available. Sign in first or set `session.firebaseIdToken` explicitly.',
     )
   }
 
-  if (!token || isJwtExpired(token)) {
-    const refreshed = await new FirebaseAuthClient(runtime).refreshFirebaseIdToken(
-      session.refreshToken,
-    )
-    return refreshed.idToken
+  return token
+}
+
+async function ensureSessionAuthToken(
+  http: HttpClient,
+  options: ResolvedClientOptions,
+  auth: RequestAuthMode,
+): Promise<string | undefined> {
+  if (auth === 'none') {
+    return undefined
   }
 
-  return token
+  const session = http.getSession()
+  const token =
+    auth === 'firebase'
+      ? (session.firebaseIdToken ?? session.bearerToken)
+      : (session.bearerToken ?? session.firebaseIdToken)
+
+  if (token && !isJwtExpired(token)) {
+    return token
+  }
+
+  if (!session.refreshToken) {
+    return token
+  }
+
+  const refreshed = await refreshFirebaseIdToken(http, options, session.refreshToken)
+  return auth === 'firebase' ? refreshed.idToken : refreshed.idToken
+}
+
+async function refreshFirebaseIdToken(
+  http: HttpClient,
+  options: ResolvedClientOptions,
+  refreshToken = http.getSession().refreshToken,
+): Promise<FirebaseTokenRefreshResponse> {
+  if (!refreshToken) {
+    throw new PopopoConfigurationError('No Firebase refresh token is available.')
+  }
+
+  const payload = await http.request<Record<string, unknown>>({
+    method: 'POST',
+    url: buildFirebaseUrl(options.firebase.secureTokenBaseUrl, 'token'),
+    auth: 'none',
+    query: {
+      key: options.firebase.apiKey,
+    },
+    headers: {
+      'content-type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }),
+  })
+  const refreshed = toFirebaseRefreshResponse(payload)
+  applyFirebaseRefresh(http, refreshed)
+  return refreshed
 }
 
 function isJwtExpired(token: string, skewSeconds = 60): boolean {
